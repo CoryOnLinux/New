@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Fake df for the "remote" side of the ssh shim: / is FAKE_PCENT % full, /boot 20 %.
+# Understands --output=FIELDS, -P, -h, -k and path arguments.
+set -u
+pc=${FAKE_PCENT:-50} fields='' human=0 paths=()
+for a in "$@"; do
+  case $a in
+    --output=*) fields=${a#--output=} ;;
+    --output) fields='source,fstype,itotal,iused,iavail,ipcent,size,used,avail,pcent,file,target' ;;
+    -h | --human-readable | -H) human=1 ;;
+    -*) ;;
+    *) paths+=("$a") ;;
+  esac
+done
+row() { # target pcent
+  local size=104857600 used avail
+  used=$((size * $2 / 100)) avail=$((size - used))
+  if ((human)); then size=100G used="$2G" avail="$((100 - $2))G"; fi
+  declare -gA R=([source]=/dev/nvme0n1p2 [fstype]=ext4 [size]=$size [used]=$used [avail]=$avail
+    [pcent]="$2%" [target]=$1 [file]=$1 [itotal]=6553600 [iused]=65536 [iavail]=6488064 [ipcent]=1%)
+}
+declare -A H=([source]=Filesystem [fstype]=Type [size]=1K-blocks [used]=Used [avail]=Avail
+  [pcent]=Use% [target]='Mounted on' [file]=File [itotal]=Inodes [iused]=IUsed [iavail]=IFree [ipcent]=IUse%)
+targets=()
+if ((${#paths[@]} == 0)); then targets=(/ /boot); else
+  for p in "${paths[@]}"; do [[ $p == /boot* ]] && targets+=(/boot) || targets+=(/); done
+fi
+if [[ -n $fields ]]; then
+  IFS=, read -ra F <<<"$fields"
+  line=''; for f in "${F[@]}"; do line+="${H[$f]:-$f} "; done; echo "${line% }"
+  for t in "${targets[@]}"; do
+    if [[ $t == /boot ]]; then row /boot 20; else row / "$pc"; fi
+    line=''; for f in "${F[@]}"; do line+="${R[$f]:-} "; done; echo " ${line% }"
+  done
+else
+  if ((human)); then echo "Filesystem      Size  Used Avail Use% Mounted on"; else echo "Filesystem     1024-blocks      Used Available Capacity Mounted on"; fi
+  for t in "${targets[@]}"; do
+    if [[ $t == /boot ]]; then row /boot 20; else row / "$pc"; fi
+    printf '%-14s %11s %9s %9s %8s %s\n' "${R[source]}" "${R[size]}" "${R[used]}" "${R[avail]}" "${R[pcent]}" "${R[target]}"
+  done
+fi

@@ -1,0 +1,7 @@
+#!/bin/sh
+# date shim: the time is FAKE_EPOCH (seconds), if set.
+real=/bin/date
+[ -x "$real" ] || real=/usr/bin/date
+[ -n "${FAKE_EPOCH:-}" ] || exec "$real" "$@"
+for a in "$@"; do case $a in -d* | --date*) exec "$real" "$@" ;; esac; done
+exec "$real" -d "@$FAKE_EPOCH" "$@"

@@ -1,0 +1,38 @@
+{
+  "account": {
+    "name": "Girokonto",
+    "iban": "DE00 0000 0000 0000 0000 00"
+  },
+  "currency": "EUR",
+  "exported_at": "2026-10-01T07:10:05Z",
+  "transactions": [
+    {
+      "id": "t-0901",
+      "date": "2026-09-01",
+      "description": "Salary ACME GmbH",
+      "amount": 3200.0,
+      "category": "Income"
+    },
+    {
+      "id": "t-0903",
+      "date": "2026-09-03",
+      "description": "REWE Markt",
+      "amount": -47.85,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0905",
+      "date": "2026-09-05",
+      "description": "Stadtwerke",
+      "amount": -92.4,
+      "category": "Utilities"
+    },
+    {
+      "id": "t-0913",
+      "date": "2026-09-13",
+      "description": "Netflix",
+      "amount": -13.99,
+      "category": "Subscriptions"
+    }
+  ]
+}

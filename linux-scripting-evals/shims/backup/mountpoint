@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# mountpoint shim: a path is "mounted" when it's listed in FAKE_MOUNTS (colon-separated).
+quiet=0 path=''
+for a in "$@"; do
+  case $a in
+    -q | --quiet) quiet=1 ;;
+    -*) ;;
+    *) path=$a ;;
+  esac
+done
+[[ -n $path ]] || { echo "mountpoint: bad usage" >&2; exit 1; }
+real=$(readlink -m -- "$path")
+IFS=: read -ra mounts <<<"${FAKE_MOUNTS:-}"
+for m in "${mounts[@]}"; do
+  if [[ -n $m && $(readlink -m -- "$m") == "$real" && -d $real ]]; then
+    ((quiet)) || echo "$path is a mountpoint"
+    exit 0
+  fi
+done
+((quiet)) || echo "$path is not a mountpoint"
+exit 32

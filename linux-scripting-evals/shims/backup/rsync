@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# rsync shim: runs the real rsync; with FAIL_RSYNC=1 it then exits 23 ("partial
+# transfer"), as when a file can't be read or the drive hiccups.
+self=$(readlink -f -- "${BASH_SOURCE[0]}")
+real=''
+while IFS= read -r c; do [[ $(readlink -f -- "$c") != "$self" ]] && { real=$c; break; }; done < <(type -ap rsync)
+if [[ -n ${SHIM_LOG:-} ]]; then { printf '%q ' rsync "$@"; printf '\n'; } >>"$SHIM_LOG"; fi
+"$real" "$@"
+rc=$?
+if [[ -n ${FAIL_RSYNC:-} ]]; then echo "rsync error: some files/attrs were not transferred (code 23)" >&2; exit 23; fi
+exit "$rc"

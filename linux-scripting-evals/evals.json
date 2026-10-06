@@ -1,0 +1,138 @@
+{
+  "skill_name": "linux-scripting",
+  "evals": [
+    {
+      "id": 1,
+      "name": "mkv-to-mp4-vaapi",
+      "prompt": "write me a script that converts all the mkv files in a folder (including subfolders) to mp4 using my RX 9070 XT for hardware encoding. keep all the audio tracks and subtitles if possible, and skip anything that's already been converted so I can rerun it",
+      "expected_output": "A bash script that encodes video with a *_vaapi encoder on the detected dGPU render node, copies MP4-compatible audio, keeps lossless audio lossless, turns text subtitles into mov_text and extracts picture subtitles to sidecar files, validates each output before keeping it, and survives reruns and interrupts. Short reply: script, fish Run block, up to 3 notes, Verified line.",
+      "files": [],
+      "check": "checks/mkv2mp4.py SCRIPT --response RESPONSE [--cmd '{script} --device /dev/null {dir}']",
+      "expectations": [
+        "[check: run1-exit, output-rich, output-hevc10, output-newline, output-cover] Every MKV, including names with a newline, a leading dash and a 'Season:1' folder, becomes a full-length MP4 and the run exits 0",
+        "[check: relative-colon-arg] Works when given a relative folder whose name contains ':' (paths reach ffmpeg as file: or ./)",
+        "[check: vaapi-encoder] The H.264 source is encoded with a *_vaapi encoder, and the render node is detected or overridable rather than hard-coded to renderD128",
+        "[check: lossless-audio] FLAC, PCM and TrueHD tracks stay lossless in the MP4 (FLAC, ALAC or copied); none become AAC",
+        "[check: audio-all-tracks, audio-language, compatible-audio-copied, dts-audio] All 7 audio tracks are kept in order with their language tags; AAC and Opus are copied; DTS is copied or kept lossless, or the reply says it was converted",
+        "[check: text-subs, forced-flag, chapters] Text subtitles become mov_text with their languages and forced flag, and chapters survive",
+        "[check: picture-subs] The PGS and VobSub tracks are kept as sidecar files (.sup / .mks) next to the MP4, or the reply explicitly says they were dropped and how to keep them",
+        "[check: cover-not-encoded, ten-bit-kept, hevc-tag] Cover art isn't encoded as a second video stream, 10-bit HEVC stays 10-bit, and HEVC output is tagged hvc1",
+        "[check: truncated-rejected, truncated-no-leftovers] An encode that exits 0 but is too short is not kept as finished",
+        "[check: sigterm-exit, sigterm-no-orphan, sigterm-no-partial, sigterm-then-rerun] SIGTERM mid-encode exits non-zero, stops ffmpeg, leaves no partial or temp file, and a rerun completes the file",
+        "[check: rerun-skips, existing-mp4-untouched, no-leftovers] A rerun changes nothing, an MP4 that already existed is left alone, and no temp files remain",
+        "Offers copying video that is already H.264/HEVC instead of re-encoding it, as a flag or a note",
+        "[check: reply-fish-commands] The commands the user is told to run are valid fish",
+        "The reply is the script, a Run block, at most 3 short notes (including what MP4 can't hold) and a Verified line that names what wasn't tested (the real GPU encode); no intro or walkthrough"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "lowercase-jpg-oneoff",
+      "prompt": "quick one - how do I change every .JPG in ~/Pictures (and all the subfolders) to lowercase .jpg? a few folders already have a .jpg with the same name",
+      "expected_output": "A one-line command or a few-line script that renames regular files ending in exactly .JPG, never overwrites an existing .jpg, reports the clashes, and works when pasted into fish. A preview form first.",
+      "files": [],
+      "check": "checks/rename.py --cmd 'COMMAND with {dir} for ~/Pictures' [--shell fish] --response RESPONSE",
+      "expectations": [
+        "The answer is a command or a script of at most ~15 lines: no option parsing, colours, usage text or other template boilerplate",
+        "[check: no-data-lost, collision-not-clobbered] No existing .jpg is overwritten and no file's content is lost",
+        "[check: collision-reported] Files that would clash are left in place and reported, not silently skipped",
+        "[check: renamed, none-left] Every other .JPG is renamed, including names with spaces, a leading dash and a newline",
+        "[check: folder-untouched, only-extension] Only regular files whose name ends in .JPG are touched: the folder Trip.JPG and x.JPG.bak stay as they are",
+        "Shows a way to preview the renames before doing them",
+        "[check: reply-fish-commands] Whatever the user is told to paste is valid fish"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "nightly-backup-removable",
+      "prompt": "set up nightly backups of ~/Documents and ~/Projects to my external drive (it mounts at /run/media/cory/Backup when it's plugged in). keep a week of daily snapshots, and if the drive isn't plugged in it should just skip quietly",
+      "expected_output": "A backup script using rsync --link-dest snapshots written to a temporary name and renamed on success, a mount check before any write, pruning to 7 only after a good run, plus a systemd user service and timer (Persistent=true) and fish commands to enable them.",
+      "files": [],
+      "check": "checks/backup.py SCRIPT --response RESPONSE",
+      "expectations": [
+        "Schedules with a systemd user timer (cron isn't installed by default on CachyOS) with Persistent=true, and mentions loginctl enable-linger if it has to run while logged out",
+        "[check: unplugged-writes-nothing, unmounted-dir-untouched] When the drive is unplugged or its folder isn't a mount point, nothing is written under /run/media",
+        "[check: unplugged-quiet-exit] A skipped run exits 0",
+        "[check: night1-snapshot, all-files-copied, symlink-kept] A snapshot holds both folders, odd names and hidden folders, and copies symlinks as symlinks",
+        "[check: unchanged-files-shared, snapshots-independent, deletions-mirrored] Unchanged files are hard links to the previous snapshot, editing a file never changes an older snapshot, and deletions show up in the next snapshot",
+        "[check: keeps-a-week, same-day-rerun] After 9 nights exactly 7 snapshots remain, and a second run on the same day breaks nothing",
+        "[check: failure-exit, failure-not-kept, failure-no-prune] A failed rsync gives a non-zero exit, isn't presented as a finished snapshot, and prunes nothing",
+        "[check: recovers, no-stale-partials] The next good night succeeds and cleans up any partial snapshot",
+        "[check: reply-fish-commands] The enable/test commands are valid fish",
+        "Ends with a Verified line saying what was actually run"
+      ]
+    },
+    {
+      "id": 4,
+      "name": "debug-ssh-loop",
+      "prompt": "my script is supposed to check disk space on every server in servers.txt but it only ever does the first one, and the summary at the end always says 0 problems even when one is clearly over 90%. what's wrong?",
+      "expected_output": "Leads with the two causes (ssh reads the rest of servers.txt from stdin; the pipe into while runs the loop in a subshell so the counter is lost), then the other bugs (last line without newline skipped, unreachable host treated as fine via local masking / empty usage, unquoted $host, relative servers.txt path), then the fixed script.",
+      "files": ["files/check-servers/check-servers.sh", "files/check-servers/servers.txt"],
+      "check": "checks/servers.py FIXED_SCRIPT --response RESPONSE",
+      "expectations": [
+        "Names ssh reading the loop's stdin as the reason only the first server is checked, and fixes it (ssh -n, </dev/null or another file descriptor)",
+        "Names the pipe into while (subshell) as the reason the count is always 0, and fixes it",
+        "Points out at least two of: the last line without a trailing newline is skipped; an unreachable host is silently treated as fine (local x=$(...) hides the failure, or an empty value); servers.txt is relative to the current directory",
+        "[check: all-hosts-checked, last-line-host, no-junk-hosts] The fixed script checks all four hosts, including the one on the unterminated last line",
+        "[check: full-disks-reported, healthy-not-flagged, unreachable-reported] It reports both full disks and the unreachable host, and doesn't flag the healthy one",
+        "[check: summary-count, exit-nonzero-on-problems, healthy-run] The summary counts the problems, the exit status is non-zero when there are any, and 0 when all is well",
+        "The reply leads with the causes of the two reported symptoms before anything else"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "bank-json-to-csv",
+      "prompt": "I've got monthly JSON exports from my bank in ~/finance/exports (one file per month like 2026-07.json, samples attached). write me something that prints total spending per category per month as CSV so I can paste it into a spreadsheet",
+      "expected_output": "A Python (or jq) script that reads every export, counts split transactions per split, takes the month from each transaction's date, uses exact decimal arithmetic, writes properly quoted CSV to stdout, leaves income out, and states how refunds and uncategorized items are handled.",
+      "files": ["files/bank/2026-07.json", "files/bank/2026-08.json", "files/bank/2026-09.json", "files/bank/2026-10.json"],
+      "check": "checks/bank.py SCRIPT --response RESPONSE [--cmd 'python3 {script} {dir}']",
+      "expectations": [
+        "Parses the JSON with Python or jq, not with grep, sed or awk",
+        "[check: runs, csv-parses] Runs on all four files (one is empty) and prints only CSV on stdout",
+        "[check: totals-match] Every total is right under one consistent reading of 'spending' (outgoing only, or net of refunds)",
+        "[check: splits-counted] Split transactions are counted per split category",
+        "[check: month-from-date] The month comes from each transaction's date, not from the file name",
+        "[check: csv-quoting, money-precision] 'Books, Media' stays one CSV field and amounts have no floating-point noise",
+        "[check: income-not-spending] Salary isn't reported as spending",
+        "[check: corrupt-file] A corrupt export stops the script with an error naming the file instead of being skipped silently",
+        "The reply states the assumptions it made about refunds, income and uncategorized transactions"
+      ]
+    },
+    {
+      "id": 6,
+      "name": "dedupe-photos",
+      "prompt": "write a script to clean up duplicate photos in ~/Pictures. same content counts as a duplicate even if the name is different. keep the oldest copy and get rid of the rest. there's like 40k files so it shouldn't take forever",
+      "expected_output": "A script that groups by size first and hashes only same-size files (or wraps jdupes/rmlint), keeps the oldest copy, previews by default or with -n, moves duplicates to a trash folder or asks before deleting, and handles any file name.",
+      "files": [],
+      "check": "checks/dedupe.py SCRIPT --dry 'DRY-RUN COMMAND' --real 'REAL COMMAND' [--yes] --response RESPONSE",
+      "expectations": [
+        "Compares content, hashing only files that share a size (or uses jdupes/rmlint), so 40k files don't all get hashed",
+        "Mentions jdupes or rmlint as an existing tool for the job, or uses one",
+        "[check: dry-run-exit, dry-run-changes-nothing, dry-run-lists] A preview mode changes nothing and lists what would be removed",
+        "Removal is reversible (moved to a trash folder) or needs an explicit flag or confirmation",
+        "[check: group-A-one-left, group-B-one-left, group-C-one-left, oldest-kept] Exactly one copy of each duplicate group remains, and it's the oldest",
+        "[check: distinct-files-kept] Files with the same size but different content are kept",
+        "[check: hardlinks, symlink-target] Hard links aren't treated as space-wasting duplicates, and a symlink's target isn't removed from under it (or the reply mentions it)",
+        "[check: rerun-noop] A second run changes nothing",
+        "[check: reply-fish-commands] Commands for the user are valid fish"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "openwrt-watchdog",
+      "prompt": "my router runs openwrt (busybox, no bash). I want a cron job that pings 1.1.1.1 every minute and runs /usr/sbin/modem-reset if it fails 3 times in a row. but don't reset more than once every 15 minutes even if it's still down",
+      "expected_output": "A POSIX sh script (#!/bin/sh) doing one check per cron run, keeping a failure counter and last-reset time in /tmp, with a lock against overlapping runs, plus the /etc/crontabs/root line and the cron restart command.",
+      "files": [],
+      "check": "checks/router.py SCRIPT --response RESPONSE",
+      "expectations": [
+        "[check: shebang-sh, dash-syntax, posix-only, busybox-ash] POSIX sh that runs under busybox ash and dash; no bashisms",
+        "[check: exits-each-minute, clean-runs] Each cron run does one check and exits; no loop or daemon",
+        "[check: first-reset-at-3rd-failure] Resets on the third consecutive failure; a success in between restarts the count",
+        "[check: cooldown-then-second, cooldown-blocks-31, third-after-cooldown, total-resets] Never resets twice within 15 minutes, and resets again once the cool-down is over if it's still down",
+        "State lives in /tmp (RAM, not flash) and a missing or garbage state file counts as zero",
+        "Gives the /etc/crontabs/root line with * * * * * and the /etc/init.d/cron restart command",
+        "Commands meant for the router are plain sh (they run in busybox over ssh), not fish"
+      ]
+    }
+  ]
+}

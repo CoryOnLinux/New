@@ -1,0 +1,69 @@
+{
+  "account": {
+    "name": "Girokonto",
+    "iban": "DE00 0000 0000 0000 0000 00"
+  },
+  "currency": "EUR",
+  "exported_at": "2026-09-01T06:58:40Z",
+  "transactions": [
+    {
+      "id": "t-0801",
+      "date": "2026-08-01",
+      "description": "Salary ACME GmbH",
+      "amount": 3200.0,
+      "category": "Income"
+    },
+    {
+      "id": "t-0802",
+      "date": "2026-08-02",
+      "description": "Edeka",
+      "amount": -61.35,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0804",
+      "date": "2026-08-04",
+      "description": "Amazon order 302-447",
+      "amount": -45.5,
+      "category": null,
+      "splits": [
+        {
+          "amount": -30.5,
+          "category": "Books, Media"
+        },
+        {
+          "amount": -15.0,
+          "category": "Household"
+        }
+      ]
+    },
+    {
+      "id": "t-0810",
+      "date": "2026-08-10",
+      "description": "Café Lumen",
+      "amount": -22.1,
+      "category": "Café & Restaurants"
+    },
+    {
+      "id": "t-0815",
+      "date": "2026-08-15",
+      "description": "Stadtwerke",
+      "amount": -89.99,
+      "category": "Utilities"
+    },
+    {
+      "id": "t-0821",
+      "date": "2026-08-21",
+      "description": "Amazon refund 302-447",
+      "amount": 30.5,
+      "category": "Books, Media"
+    },
+    {
+      "id": "t-0830",
+      "date": "2026-08-30",
+      "description": "Edeka",
+      "amount": -0.7,
+      "category": "Groceries"
+    }
+  ]
+}

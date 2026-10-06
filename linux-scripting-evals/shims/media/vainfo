@@ -1,0 +1,18 @@
+#!/bin/sh
+# vainfo shim: report a working AMD VAAPI driver with HEVC/H.264/AV1 encode.
+cat <<'EOF'
+Trying display: drm
+vainfo: VA-API version: 1.22 (libva 2.22.0)
+vainfo: Driver version: Mesa Gallium driver 25.2.0 for AMD Radeon RX 9070 XT (radeonsi, gfx1201, LLVM 20.1.8, DRM 3.64)
+vainfo: Supported profile and entrypoints
+      VAProfileH264Main               : VAEntrypointVLD
+      VAProfileH264Main               : VAEntrypointEncSlice
+      VAProfileH264High               : VAEntrypointVLD
+      VAProfileH264High               : VAEntrypointEncSlice
+      VAProfileHEVCMain               : VAEntrypointVLD
+      VAProfileHEVCMain               : VAEntrypointEncSlice
+      VAProfileHEVCMain10             : VAEntrypointVLD
+      VAProfileHEVCMain10             : VAEntrypointEncSlice
+      VAProfileAV1Profile0            : VAEntrypointVLD
+      VAProfileAV1Profile0            : VAEntrypointEncSlice
+EOF
