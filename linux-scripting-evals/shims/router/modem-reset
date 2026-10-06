@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stand-in for /usr/sbin/modem-reset: records the minute it was called.
+echo "${FAKE_MINUTE:-?}" >>"${RESET_LOG:?}"

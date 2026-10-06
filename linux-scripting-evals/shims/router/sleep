@@ -1,0 +1,4 @@
+#!/bin/sh
+# sleep shim: returns at once (dash and bash only; busybox ash runs its own sleep).
+[ -n "${SHIM_LOG:-}" ] && echo "sleep $*" >>"$SHIM_LOG"
+exit 0

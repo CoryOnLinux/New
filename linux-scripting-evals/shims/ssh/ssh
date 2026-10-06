@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# ssh shim: behaves like ssh where loops care (it reads all of stdin unless -n is
+# given or stdin is redirected), then runs the remote command locally with a fake df
+# for that host.
+#   SSH_FAKE_HOSTS=FILE   lines "host percent-used" or "host down"
+#   SHIM_LOG=FILE         appends "host<TAB>command" per call
+set -u
+
+here=$(cd -- "$(dirname -- "$(readlink -f -- "${BASH_SOURCE[0]}")")" && pwd)
+no_stdin=0
+while (($#)); do
+  case $1 in
+    --) shift; break ;;
+    -[BbcDEeFIiJLlmOopQRSWw]) shift 2 ;;               # options that take a value
+    -[BbcDEeFIiJLlmOopQRSWw]?*) shift ;;               # ... with the value attached
+    -*) [[ $1 == *n* ]] && no_stdin=1; shift ;;        # flag clusters such as -qn
+    *) break ;;
+  esac
+done
+host=${1:-}
+shift || true
+host=${host#*@}
+cmd=$*
+
+if [[ -n ${SHIM_LOG:-} ]]; then printf '%s\t%s\n' "$host" "$cmd" >>"$SHIM_LOG"; fi
+if ((!no_stdin)); then cat >/dev/null; fi   # real ssh forwards (consumes) stdin
+
+state=''
+if [[ -n ${SSH_FAKE_HOSTS:-} && -r $SSH_FAKE_HOSTS ]]; then
+  state=$(awk -v h="$host" '$1 == h { print $2; exit }' "$SSH_FAKE_HOSTS")
+fi
+case $state in
+  '') echo "ssh: Could not resolve hostname ${host:-''}: Name or service not known" >&2; exit 255 ;;
+  down) sleep 0.2; echo "ssh: connect to host $host port 22: Connection timed out" >&2; exit 255 ;;
+esac
+[[ -n $cmd ]] || exit 0
+FAKE_PCENT=$state PATH="$here/remote:$PATH" exec bash -c "$cmd" </dev/null

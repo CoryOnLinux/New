@@ -1,0 +1,9 @@
+{
+  "account": {
+    "name": "Girokonto",
+    "iban": "DE00 0000 0000 0000 0000 00"
+  },
+  "currency": "EUR",
+  "exported_at": "2026-10-02T07:00:00Z",
+  "transactions": []
+}

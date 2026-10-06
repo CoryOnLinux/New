@@ -1,0 +1,11 @@
+#!/bin/sh
+# ping shim: up or down according to PING_PLAN (one character per minute, u or d)
+# at minute FAKE_MINUTE. Every call is logged to SHIM_LOG.
+[ -n "${SHIM_LOG:-}" ] && echo "ping minute=${FAKE_MINUTE:-?} $*" >>"$SHIM_LOG"
+state=$(printf '%s' "${PING_PLAN:-u}" | cut -c$((${FAKE_MINUTE:-0} + 1)))
+if [ "$state" = u ]; then
+  echo "64 bytes from 1.1.1.1: seq=0 ttl=57 time=9.8 ms"
+  exit 0
+fi
+echo "1 packets transmitted, 0 packets received, 100% packet loss"
+exit 1

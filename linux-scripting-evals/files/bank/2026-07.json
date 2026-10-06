@@ -1,0 +1,90 @@
+{
+  "account": {
+    "name": "Girokonto",
+    "iban": "DE00 0000 0000 0000 0000 00"
+  },
+  "currency": "EUR",
+  "exported_at": "2026-08-01T07:02:11Z",
+  "transactions": [
+    {
+      "id": "t-0701",
+      "date": "2026-07-01",
+      "description": "Salary ACME GmbH",
+      "amount": 3200.0,
+      "category": "Income"
+    },
+    {
+      "id": "t-0703",
+      "date": "2026-07-03",
+      "description": "REWE Markt",
+      "amount": -54.2,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0705",
+      "date": "2026-07-05",
+      "description": "Lidl",
+      "amount": -10.1,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0706",
+      "date": "2026-07-06",
+      "description": "Lidl",
+      "amount": -20.2,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0709",
+      "date": "2026-07-09",
+      "description": "Amazon order 302-118",
+      "amount": -120.0,
+      "category": null,
+      "splits": [
+        {
+          "amount": -80.0,
+          "category": "Household"
+        },
+        {
+          "amount": -40.0,
+          "category": "Books, Media"
+        }
+      ]
+    },
+    {
+      "id": "t-0712",
+      "date": "2026-07-12",
+      "description": "Café Lumen",
+      "amount": -18.4,
+      "category": "Café & Restaurants"
+    },
+    {
+      "id": "t-0715",
+      "date": "2026-07-15",
+      "description": "REWE Markt refund",
+      "amount": 15.0,
+      "category": "Groceries"
+    },
+    {
+      "id": "t-0720",
+      "date": "2026-07-20",
+      "description": "Stadtwerke",
+      "amount": -89.99,
+      "category": "Utilities"
+    },
+    {
+      "id": "t-0728",
+      "date": "2026-07-28",
+      "description": "Kiosk",
+      "amount": -3.3,
+      "category": null
+    },
+    {
+      "id": "t-0801n",
+      "date": "2026-08-01",
+      "description": "Netflix",
+      "amount": -13.99,
+      "category": "Subscriptions"
+    }
+  ]
+}
