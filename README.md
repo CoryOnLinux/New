@@ -11,3 +11,7 @@ A Claude skill for writing, fixing and reviewing Linux shell scripts, plus the e
 ```fish
 cp -r linux-scripting ~/.claude/skills/
 ```
+
+# flacmeta
+
+`flacmeta/`: a FLAC library tool. It runs health checks (decode/MD5, padded bit depth, lossy-source and upsampled hi-res detection, tags, covers, album completeness), safe tag fixes with undo, `Album (Year)` album tags, and ReplayGain 2.0 via rsgain. See `flacmeta/README.md`.
