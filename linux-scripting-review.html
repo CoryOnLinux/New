@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Eval Review</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js" integrity="sha384-EnyY0/GSHQGSxSgMwaIPzSESbqoOLSexfnSMN2AP+39Ckmn92stwABZynq1JyzdT" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #faf9f5;
+      --surface: #ffffff;
+      --border: #e8e6dc;
+      --text: #141413;
+      --text-muted: #b0aea5;
+      --accent: #d97757;
+      --accent-hover: #c4613f;
+      --green: #788c5d;
+      --green-bg: #eef2e8;
+      --red: #c44;
+      --red-bg: #fceaea;
+      --header-bg: #141413;
+      --header-text: #faf9f5;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Lora', Georgia, serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ---- Header ---- */
+    .header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .header h1 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .header .instructions {
+      font-size: 0.8rem;
+      opacity: 0.7;
+      margin-top: 0.25rem;
+    }
+    .header .progress {
+      font-size: 0.875rem;
+      opacity: 0.8;
+      text-align: right;
+    }
+
+    /* ---- Main content ---- */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+
+    /* ---- Sections ---- */
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      flex-shrink: 0;
+    }
+    .section-header {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.75rem 1rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .section-body {
+      padding: 1rem;
+    }
+
+    /* ---- Config badge ---- */
+    .config-badge {
+      display: inline-block;
+      padding: 0.2rem 0.625rem;
+      border-radius: 9999px;
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      margin-left: 0.75rem;
+      vertical-align: middle;
+    }
+    .config-badge.config-primary {
+      background: rgba(33, 150, 243, 0.12);
+      color: #1976d2;
+    }
+    .config-badge.config-baseline {
+      background: rgba(255, 193, 7, 0.15);
+      color: #f57f17;
+    }
+
+    /* ---- Prompt ---- */
+    .prompt-text {
+      white-space: pre-wrap;
+      font-size: 0.9375rem;
+      line-height: 1.6;
+    }
+
+    /* ---- Outputs ---- */
+    .output-file {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .output-file + .output-file {
+      margin-top: 1rem;
+    }
+    .output-file-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .output-file-header .dl-btn {
+      font-size: 0.7rem;
+      color: var(--accent);
+      text-decoration: none;
+      cursor: pointer;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-weight: 500;
+      opacity: 0.8;
+    }
+    .output-file-header .dl-btn:hover {
+      opacity: 1;
+      text-decoration: underline;
+    }
+    .output-file-content {
+      padding: 0.75rem;
+      overflow-x: auto;
+    }
+    .output-file-content pre {
+      font-size: 0.8125rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'SF Mono', SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace;
+    }
+    .output-file-content img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+    .output-file-content iframe {
+      width: 100%;
+      height: 600px;
+      border: none;
+    }
+    .output-file-content table {
+      border-collapse: collapse;
+      font-size: 0.8125rem;
+      width: 100%;
+    }
+    .output-file-content table td,
+    .output-file-content table th {
+      border: 1px solid var(--border);
+      padding: 0.375rem 0.5rem;
+      text-align: left;
+    }
+    .output-file-content table th {
+      background: var(--bg);
+      font-weight: 600;
+    }
+    .output-file-content .download-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+    .output-file-content .download-link:hover {
+      background: var(--border);
+    }
+    .empty-state {
+      color: var(--text-muted);
+      font-style: italic;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ---- Feedback ---- */
+    .prev-feedback {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.625rem 0.75rem;
+      margin-top: 0.75rem;
+      font-size: 0.8125rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .prev-feedback-label {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.25rem;
+      color: var(--text-muted);
+    }
+    .feedback-textarea {
+      width: 100%;
+      min-height: 100px;
+      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-family: inherit;
+      font-size: 0.9375rem;
+      line-height: 1.5;
+      resize: vertical;
+      color: var(--text);
+    }
+    .feedback-textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .feedback-status {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      margin-top: 0.5rem;
+      min-height: 1.1em;
+    }
+
+    /* ---- Grades (collapsible) ---- */
+    .grades-toggle {
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      user-select: none;
+    }
+    .grades-toggle:hover {
+      color: var(--accent);
+    }
+    .grades-toggle .arrow {
+      margin-right: 0.5rem;
+      transition: transform 0.15s;
+      font-size: 0.75rem;
+    }
+    .grades-toggle .arrow.open {
+      transform: rotate(90deg);
+    }
+    .grades-content {
+      display: none;
+      margin-top: 0.75rem;
+    }
+    .grades-content.open {
+      display: block;
+    }
+    .grades-summary {
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .grade-badge {
+      display: inline-block;
+      padding: 0.125rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .grade-pass { background: var(--green-bg); color: var(--green); }
+    .grade-fail { background: var(--red-bg); color: var(--red); }
+    .assertion-list {
+      list-style: none;
+    }
+    .assertion-item {
+      padding: 0.625rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8125rem;
+    }
+    .assertion-item:last-child { border-bottom: none; }
+    .assertion-status {
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .assertion-status.pass { color: var(--green); }
+    .assertion-status.fail { color: var(--red); }
+    .assertion-evidence {
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+      padding-left: 1.5rem;
+    }
+
+    /* ---- View tabs ---- */
+    .view-tabs {
+      display: flex;
+      gap: 0;
+      padding: 0 2rem;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .view-tab {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.625rem 1.25rem;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    .view-tab:hover { color: var(--text); }
+    .view-tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+    .view-panel { display: none; }
+    .view-panel.active { display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+
+    /* ---- Benchmark view ---- */
+    .benchmark-view {
+      padding: 1.5rem 2rem;
+      overflow-y: auto;
+      flex: 1;
+    }
+    .benchmark-table {
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.8125rem;
+      width: 100%;
+      margin-bottom: 1.5rem;
+    }
+    .benchmark-table th, .benchmark-table td {
+      padding: 0.625rem 0.75rem;
+      text-align: left;
+      border: 1px solid var(--border);
+    }
+    .benchmark-table th {
+      font-family: 'Poppins', sans-serif;
+      background: var(--header-bg);
+      color: var(--header-text);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .benchmark-table tr:hover { background: var(--bg); }
+    .benchmark-table tr.benchmark-row-with { background: rgba(33, 150, 243, 0.06); }
+    .benchmark-table tr.benchmark-row-without { background: rgba(255, 193, 7, 0.06); }
+    .benchmark-table tr.benchmark-row-with:hover { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-without:hover { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-table tr.benchmark-row-avg { font-weight: 600; border-top: 2px solid var(--border); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-with { background: rgba(33, 150, 243, 0.12); }
+    .benchmark-table tr.benchmark-row-avg.benchmark-row-without { background: rgba(255, 193, 7, 0.12); }
+    .benchmark-delta-positive { color: var(--green); font-weight: 600; }
+    .benchmark-delta-negative { color: var(--red); font-weight: 600; }
+    .benchmark-notes {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+    }
+    .benchmark-notes h3 {
+      font-family: 'Poppins', sans-serif;
+      font-size: 0.875rem;
+      margin-bottom: 0.75rem;
+    }
+    .benchmark-notes ul {
+      list-style: disc;
+      padding-left: 1.25rem;
+    }
+    .benchmark-notes li {
+      font-size: 0.8125rem;
+      line-height: 1.6;
+      margin-bottom: 0.375rem;
+    }
+    .benchmark-empty {
+      color: var(--text-muted);
+      font-style: italic;
+      text-align: center;
+      padding: 3rem;
+    }
+
+    /* ---- Navigation ---- */
+    .nav {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 2rem;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      flex-shrink: 0;
+    }
+    .nav-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .nav-btn:hover:not(:disabled) {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .nav-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .done-btn {
+      font-family: 'Poppins', sans-serif;
+      padding: 0.5rem 1.5rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    .done-btn:hover {
+      background: var(--bg);
+      border-color: var(--text-muted);
+    }
+    .done-btn.ready {
+      border: none;
+      background: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    .done-btn.ready:hover {
+      background: var(--accent-hover);
+    }
+    /* ---- Done overlay ---- */
+    .done-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 100;
+      justify-content: center;
+      align-items: center;
+    }
+    .done-overlay.visible {
+      display: flex;
+    }
+    .done-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 2rem 3rem;
+      text-align: center;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      max-width: 500px;
+    }
+    .done-card h2 {
+      font-size: 1.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .done-card p {
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+      line-height: 1.5;
+    }
+    .done-card .btn-row {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: center;
+    }
+    .done-card button {
+      padding: 0.5rem 1.25rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .done-card button:hover {
+      background: var(--bg);
+    }
+    /* ---- Toast ---- */
+    .toast {
+      position: fixed;
+      bottom: 5rem;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--header-bg);
+      color: var(--header-text);
+      padding: 0.625rem 1.25rem;
+      border-radius: var(--radius);
+      font-size: 0.875rem;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 200;
+    }
+    .toast.visible {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div id="app" style="height:100vh; display:flex; flex-direction:column;">
+    <div class="header">
+      <div>
+        <h1>Eval Review: <span id="skill-name"></span></h1>
+        <div class="instructions">Review each output and leave feedback below. Navigate with arrow keys or buttons. When done, copy feedback and paste into Claude Code.</div>
+      </div>
+      <div class="progress" id="progress"></div>
+    </div>
+
+    <!-- View tabs (only shown when benchmark data exists) -->
+    <div class="view-tabs" id="view-tabs" style="display:none;">
+      <button class="view-tab active" onclick="switchView('outputs')">Outputs</button>
+      <button class="view-tab" onclick="switchView('benchmark')">Benchmark</button>
+    </div>
+
+    <!-- Outputs panel (qualitative review) -->
+    <div class="view-panel active" id="panel-outputs">
+    <div class="main">
+      <!-- Prompt -->
+      <div class="section">
+        <div class="section-header">Prompt <span class="config-badge" id="config-badge" style="display:none;"></span></div>
+        <div class="section-body">
+          <div class="prompt-text" id="prompt-text"></div>
+        </div>
+      </div>
+
+      <!-- Outputs -->
+      <div class="section">
+        <div class="section-header">Output</div>
+        <div class="section-body" id="outputs-body">
+          <div class="empty-state">No output files found</div>
+        </div>
+      </div>
+
+      <!-- Previous Output (collapsible) -->
+      <div class="section" id="prev-outputs-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="togglePrevOutputs()">
+            <span class="arrow" id="prev-outputs-arrow">&#9654;</span>
+            Previous Output
+          </div>
+        </div>
+        <div class="grades-content" id="prev-outputs-content"></div>
+      </div>
+
+      <!-- Grades (collapsible) -->
+      <div class="section" id="grades-section" style="display:none;">
+        <div class="section-header">
+          <div class="grades-toggle" onclick="toggleGrades()">
+            <span class="arrow" id="grades-arrow">&#9654;</span>
+            Formal Grades
+          </div>
+        </div>
+        <div class="grades-content" id="grades-content"></div>
+      </div>
+
+      <!-- Feedback -->
+      <div class="section">
+        <div class="section-header">Your Feedback</div>
+        <div class="section-body">
+          <textarea
+            class="feedback-textarea"
+            id="feedback"
+            placeholder="What do you think of this output? Any issues, suggestions, or things that look great?"
+          ></textarea>
+          <div class="feedback-status" id="feedback-status"></div>
+          <div class="prev-feedback" id="prev-feedback" style="display:none;">
+            <div class="prev-feedback-label">Previous feedback</div>
+            <div id="prev-feedback-text"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="nav" id="outputs-nav">
+      <button class="nav-btn" id="prev-btn" onclick="navigate(-1)">&#8592; Previous</button>
+      <button class="done-btn" id="done-btn" onclick="showDoneDialog()">Submit All Reviews</button>
+      <button class="nav-btn" id="next-btn" onclick="navigate(1)">Next &#8594;</button>
+    </div>
+    </div><!-- end panel-outputs -->
+
+    <!-- Benchmark panel (quantitative stats) -->
+    <div class="view-panel" id="panel-benchmark">
+      <div class="benchmark-view" id="benchmark-content">
+        <div class="benchmark-empty">No benchmark data available. Run a benchmark to see quantitative results here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Done overlay -->
+  <div class="done-overlay" id="done-overlay">
+    <div class="done-card">
+      <h2>Review Complete</h2>
+      <p>Your feedback has been saved. Go back to your Claude Code session and tell Claude you're done reviewing.</p>
+      <div class="btn-row">
+        <button onclick="closeDoneDialog()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    // ---- Embedded data (injected by generate_review.py) ----
+    const EMBEDDED_DATA = {"skill_name": "linux-scripting", "runs": [{"id": "eval-1-mkv-to-mp4-vaapi-with_skill-run-1", "prompt": "write me a script that converts all the mkv files in a folder (including subfolders) to mp4 using my RX 9070 XT for hardware encoding. keep all the audio tracks and subtitles if possible, and skip anything that's already been converted so I can rerun it", "eval_id": 1, "outputs": [{"name": "mkv2mp4.sh", "type": "text", "content": "#!/usr/bin/env bash\n# mkv2mp4.sh - convert every .mkv under the given folders to an .mp4 beside it,\n# encoding video on the AMD GPU (VAAPI) and keeping all audio and text subtitles.\n# Rerun-safe: finished .mp4 files are skipped, and partial ones never look finished.\nset -Eeuo pipefail\nshopt -s nullglob\n\nreadonly PROG=${0##*/}\nDRY_RUN=0\nCODEC=${CODEC:-hevc}                    # hevc | h264 | av1\nQP=${QP:-}                              # empty = per-codec default (see usage)\nVAAPI_DEVICE=${VAAPI_DEVICE:-}          # e.g. /dev/dri/renderD129; empty = auto-detect the dGPU\nAAC_KBPS_PER_CH=${AAC_KBPS_PER_CH:-96}  # bitrate for audio that has to be re-encoded\nSYSFS=${SYSFS:-/sys}\nDRI_DIR=${DRI_DIR:-/dev/dri}\n\n# Audio that MP4 carries well is copied untouched; the rest (DTS, TrueHD, PCM,\n# Vorbis...) is re-encoded to AAC. Text subs become mov_text. Picture subs (PGS,\n# VobSub, DVB) can't be stored in MP4, so they are left out and reported.\nreadonly COPY_AUDIO=' aac ac3 eac3 mp3 mp2 opus flac alac '\nreadonly TEXT_SUBS=' subrip srt ass ssa webvtt mov_text text microdvd subviewer subviewer1 sami mpl2 realtext '\nreadonly HIGH_DEPTH='(10|12|14|16)[bl]e$'   # pix_fmt suffix of >8-bit video, e.g. yuv420p10le\n\nNODE='' CUR_TMP='' TAG='' FF_PID=''\nn_ok=0 n_skip=0 n_fail=0\n\nlog()   { printf '%s: %s\\n' \"$PROG\" \"$*\" >&2; }\ndie()   { log \"error: $*\"; exit 1; }\nneed()  { command -v \"$1\" >/dev/null 2>&1 || die \"missing '$1' (sudo pacman -S --needed ${2:-$1})\"; }\nusage() {\n  cat <<EOF\nUsage: $PROG [-n] [-c hevc|h264|av1] [-q QP] DIR|FILE...\nConvert every .mkv under DIR (recursively) to an .mp4 beside it, with the video\nencoded on the AMD GPU via VAAPI. MKVs whose .mp4 already exists are skipped.\n  -c CODEC  video codec: hevc (default), h264, av1\n  -q QP     constant quality, lower = better and bigger\n            defaults: hevc 24, h264 22, av1 96 (AV1 uses a 0-255 scale)\n  -n        dry run: show what would be done, write nothing\n  -h        this help\nEnv: VAAPI_DEVICE=/dev/dri/renderD129 picks the render node by hand.\nEOF\n}\n\nsummary() {\n  local verb=converted\n  if ((DRY_RUN)); then verb='to convert'; fi\n  log \"done: $n_ok $verb, $n_skip skipped, $n_fail failed\"\n}\ndrop_tmp()  { if [[ -n $CUR_TMP ]]; then rm -f -- \"$CUR_TMP\"; fi; CUR_TMP=''; }\non_signal() {\n  log \"interrupted\"\n  # The partial output is discarded anyway, so stop ffmpeg now rather than let it finalize.\n  if [[ -n $FF_PID ]]; then kill -KILL \"$FF_PID\" 2>/dev/null || true; wait \"$FF_PID\" 2>/dev/null || true; fi\n  summary\n  exit \"$1\"\n}\ntrap drop_tmp EXIT\ntrap 'on_signal 130' INT\ntrap 'on_signal 143' TERM\ntrap 'log \"failed at line $LINENO: $BASH_COMMAND\"' ERR\n\n# Ryzen 9000 has an amdgpu iGPU too, and card/renderD numbers aren't stable, so take\n# the AMD card with the most VRAM and the render node on the same PCI device.\nfind_render_node() {\n  local card vendor vram best='' best_vram=-1 r\n  for card in \"$SYSFS\"/class/drm/card*; do\n    [[ ${card##*/} =~ ^card[0-9]+$ ]] || continue\n    read -r vendor 2>/dev/null <\"$card/device/vendor\" || continue\n    [[ $vendor == 0x1002 ]] || continue\n    read -r vram 2>/dev/null <\"$card/device/mem_info_vram_total\" || vram=0\n    [[ $vram =~ ^[0-9]+$ ]] || vram=0\n    if ((vram > best_vram)); then best=$card best_vram=$vram; fi\n  done\n  [[ -n $best ]] || return 1\n  best=$(readlink -f -- \"$best/device\")\n  for r in \"$SYSFS\"/class/drm/renderD*; do\n    if [[ $(readlink -f -- \"$r/device\") == \"$best\" ]]; then NODE=$DRI_DIR/${r##*/}; return 0; fi\n  done\n  return 1\n}\n\n# Fail fast (missing VAAPI driver, encoder unsupported) before touching any file.\ntest_encoder() {\n  local err\n  if ! err=$(ffmpeg -nostdin -hide_banner -loglevel error \\\n      -init_hw_device \"vaapi=va:$NODE\" -filter_hw_device va \\\n      -f lavfi -i testsrc2=size=640x360:rate=30:duration=0.5 \\\n      -vf 'format=nv12,hwupload' -c:v \"${CODEC}_vaapi\" -f null - 2>&1); then\n    die \"test encode with ${CODEC}_vaapi on $NODE failed: ${err:-no output}\n  check the driver with: vainfo --display drm --device $NODE\"\n  fi\n}\n\n# \"5025.042000\" -> milliseconds, into the variable named by $2 (0 if unknown)\nto_ms() {\n  local frac=0\n  if [[ $1 =~ ^([0-9]+)(\\.([0-9]+))?$ ]]; then\n    frac=${BASH_REMATCH[3]}000\n    printf -v \"$2\" '%d' $((10#${BASH_REMATCH[1]} * 1000 + 10#${frac:0:3}))\n  else\n    printf -v \"$2\" '%d' 0\n  fi\n}\n\n# Returns 0 converted, 1 failed, 2 skipped. Called in an `||` context, so set -e\n# is off in here and every step checks its own result.\nconvert_one() {\n  local src=$1 dir name stem out tmp probe line f idx type codec ch pix pic lang\n  local dur='' vidx='' vpix='' fmt=nv12 vf o=1 rc=1 attempt d src_ms out_ms start=$SECONDS\n  local -a fields=() maps=() codecs=() dropped=() venc=() cmd=()\n  dir=${src%/*} name=${src##*/}\n  stem=${name%.*}\n  out=$dir/$stem.mp4\n  tmp=$dir/.$stem.mp4.part   # same folder, so the final mv is atomic\n\n  if [[ -s $out ]]; then log \"$TAG skip, already converted: $out\"; return 2; fi\n  if [[ ! -w $dir ]]; then log \"$TAG FAIL, folder not writable: $dir\"; return 1; fi\n  if ! probe=$(ffprobe -v error -of compact=p=0 -show_entries \\\n      'format=duration:stream=index,codec_type,codec_name,channels,pix_fmt:stream_disposition=attached_pic:stream_tags=language' \\\n      \"file:$src\"); then\n    log \"$TAG FAIL, ffprobe can't read: $src\"; return 1\n  fi\n\n  while IFS= read -r line; do\n    idx='' type='' codec='' ch='' pix='' pic=0 lang=''\n    IFS='|' read -ra fields <<<\"$line\"\n    for f in \"${fields[@]}\"; do\n      case $f in\n        index=*) idx=${f#*=} ;;            codec_type=*) type=${f#*=} ;;\n        codec_name=*) codec=${f#*=} ;;     channels=*) ch=${f#*=} ;;\n        pix_fmt=*) pix=${f#*=} ;;          disposition:attached_pic=*) pic=${f#*=} ;;\n        tag:language=*) lang=${f#*=} ;;    duration=*) dur=${f#*=} ;;\n      esac\n    done\n    [[ -n $idx ]] || continue\n    case $type in\n      video)\n        # MKV cover art shows up as an attached-picture video stream: never encode it.\n        if [[ $pic != 0 ]]; then continue; fi\n        if [[ -z $vidx ]]; then vidx=$idx vpix=$pix; else dropped+=(\"#$idx extra video track\"); fi ;;\n      audio)\n        maps+=(-map \"0:$idx\")\n        if [[ $COPY_AUDIO == *\" $codec \"* ]]; then\n          codecs+=(\"-c:$o\" copy)\n        else\n          [[ $ch =~ ^[1-9][0-9]*$ ]] || ch=2\n          codecs+=(\"-c:$o\" aac \"-b:$o\" \"$((ch * AAC_KBPS_PER_CH))k\")\n        fi\n        o=$((o + 1)) ;;\n      subtitle)\n        if [[ $TEXT_SUBS == *\" $codec \"* ]]; then\n          maps+=(-map \"0:$idx\"); codecs+=(\"-c:$o\" mov_text); o=$((o + 1))\n        else\n          dropped+=(\"#$idx picture subtitle $codec${lang:+ ($lang)}\")\n        fi ;;\n    esac\n  done <<<\"$probe\"\n\n  if [[ -z $vidx ]]; then log \"$TAG FAIL, no video stream: $src\"; return 1; fi\n  if ((${#dropped[@]})); then\n    printf -v f '%s, ' \"${dropped[@]}\"\n    log \"$TAG note, not carried over to MP4: ${f%, }\"\n  fi\n\n  if [[ $vpix =~ $HIGH_DEPTH && $CODEC != h264 ]]; then fmt=p010; fi\n  # \"|vaapi\" lets GPU-decoded frames pass straight through hwupload, while\n  # CPU-decoded frames get converted and uploaded.\n  vf=\"format=$fmt|vaapi,hwupload\"\n  # h264_vaapi is 8-bit only, so GPU-decoded 10-bit frames are converted on the GPU.\n  if [[ $CODEC == h264 && $vpix =~ $HIGH_DEPTH ]]; then vf+=',scale_vaapi=format=nv12'; fi\n  venc=(-vf \"$vf\" -c:v \"${CODEC}_vaapi\" -rc_mode CQP -global_quality \"$QP\")\n  # hvc1 (not ffmpeg's default hev1) is what Apple/QuickTime and many TVs require.\n  if [[ $CODEC == hevc ]]; then venc+=(-tag:v hvc1); fi\n  maps=(-map \"0:$vidx\" \"${maps[@]}\")\n\n  # Try full-GPU decode+encode first; if the GPU can't decode the source\n  # (10-bit H.264, MPEG-4 ASP, ...), retry with CPU decode + GPU encode.\n  for attempt in gpu cpu; do\n    cmd=(ffmpeg -nostdin -hide_banner -loglevel error -stats -y\n      -init_hw_device \"vaapi=va:$NODE\" -filter_hw_device va)\n    if [[ $attempt == gpu ]]; then cmd+=(-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi); fi\n    cmd+=(-i \"file:$src\" \"${maps[@]}\" \"${venc[@]}\" \"${codecs[@]}\"\n      -max_muxing_queue_size 4096 -movflags +faststart -f mp4 \"file:$tmp\")\n    if ((DRY_RUN)); then log \"$TAG would run: $(printf '%q ' \"${cmd[@]}\")\"; return 0; fi\n\n    log \"$TAG converting ($attempt decode): $src\"\n    CUR_TMP=$tmp rc=0\n    # Run in the background and wait, so Ctrl+C / kill take effect immediately\n    # instead of after the current file finishes.\n    \"${cmd[@]}\" &\n    FF_PID=$!\n    wait \"$FF_PID\" || rc=$?\n    FF_PID=''\n    if ((rc == 0)); then break; fi\n    drop_tmp\n    # ffmpeg exits 255 when it caught Ctrl+C: stop the batch instead of retrying.\n    if ((rc == 255)); then on_signal 130; fi\n    if [[ $attempt == gpu ]]; then log \"$TAG failed with GPU decode (exit $rc), retrying with CPU decode\"; fi\n  done\n  if ((rc != 0)); then log \"$TAG FAIL, ffmpeg exit $rc: $src\"; return 1; fi\n\n  # A truncated output would be skipped forever on reruns, so check before keeping it.\n  to_ms \"$dur\" src_ms\n  out_ms=0\n  if d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 \"file:$tmp\"); then to_ms \"$d\" out_ms; fi\n  if ((out_ms == 0 || out_ms < src_ms * 9 / 10)); then\n    drop_tmp; log \"$TAG FAIL, output too short ($((out_ms / 1000))s of $((src_ms / 1000))s): $src\"; return 1\n  fi\n  if ! mv -f -- \"$tmp\" \"$out\"; then drop_tmp; log \"$TAG FAIL, can't move output into place: $out\"; return 1; fi\n  CUR_TMP=''\n  log \"$TAG ok ($((SECONDS - start))s): $out\"\n}\n\nmain() {\n  local opt f qmax i=0 rc\n  local -a roots=() files=()\n  while getopts ':nc:q:h' opt; do\n    case $opt in\n      n) DRY_RUN=1 ;;\n      c) CODEC=$OPTARG ;;\n      q) QP=$OPTARG ;;\n      h) usage; exit 0 ;;\n      :) usage >&2; die \"-$OPTARG needs a value\" ;;\n      *) usage >&2; exit 2 ;;\n    esac\n  done\n  shift $((OPTIND - 1))\n  if (($# == 0)); then usage >&2; exit 2; fi\n\n  case $CODEC in\n    hevc) : \"${QP:=24}\"; qmax=51 ;;\n    h264) : \"${QP:=22}\"; qmax=51 ;;\n    av1)  : \"${QP:=96}\"; qmax=255 ;;\n    *) die \"unknown codec '$CODEC' (use hevc, h264 or av1)\" ;;\n  esac\n  if ! [[ $QP =~ ^[0-9]+$ ]] || ((10#$QP > qmax)); then die \"QP must be 0-$qmax for $CODEC, got '$QP'\"; fi\n  QP=$((10#$QP))\n\n  for f in \"$@\"; do\n    [[ -e $f ]] || die \"no such file or folder: $f\"\n    if [[ $f == -* ]]; then f=./$f; fi   # find would read a leading-dash name as an option\n    roots+=(\"$f\")\n  done\n\n  need ffmpeg\n  need ffprobe ffmpeg\n  need flock util-linux\n\n  if [[ -n $VAAPI_DEVICE ]]; then\n    NODE=$VAAPI_DEVICE\n  elif ! find_render_node; then\n    die \"no AMD GPU render node found; set VAAPI_DEVICE=/dev/dri/renderD12x\"\n  fi\n  [[ -r $NODE && -w $NODE ]] || die \"can't open $NODE (missing, or no permission)\"\n  log \"using $NODE with ${CODEC}_vaapi, QP $QP\"\n\n  if ((!DRY_RUN)); then\n    # Two runs at once would fight over the GPU and the same temp files.\n    exec 9>\"${XDG_RUNTIME_DIR:-/tmp}/mkv2mp4.lock\"\n    flock -n 9 || die \"another $PROG run is already active\"\n    test_encoder\n  fi\n\n  # Skip desktop trash folders (.Trash-1000) on external drives.\n  mapfile -d '' files < <(find -H \"${roots[@]}\" -name '.Trash-*' -prune -o \\\n    -type f -iname '*.mkv' -print0 | sort -z)\n  if ((${#files[@]} == 0)); then log \"no .mkv files found\"; exit 0; fi\n\n  for f in \"${files[@]}\"; do\n    i=$((i + 1))\n    TAG=\"[$i/${#files[@]}]\"\n    if [[ $f != */* ]]; then f=./$f; fi\n    rc=0\n    convert_one \"$f\" || rc=$?\n    case $rc in\n      0) n_ok=$((n_ok + 1)) ;;\n      2) n_skip=$((n_skip + 1)) ;;\n      *) n_fail=$((n_fail + 1)) ;;\n    esac\n  done\n  summary\n  ((n_fail == 0)) || exit 1\n}\n\nmain \"$@\"\n"}, {"name": "response.md", "type": "text", "content": "```bash\n#!/usr/bin/env bash\n# mkv2mp4.sh - convert every .mkv under the given folders to an .mp4 beside it,\n# encoding video on the AMD GPU (VAAPI) and keeping all audio and text subtitles.\n# Rerun-safe: finished .mp4 files are skipped, and partial ones never look finished.\nset -Eeuo pipefail\nshopt -s nullglob\n\nreadonly PROG=${0##*/}\nDRY_RUN=0\nCODEC=${CODEC:-hevc}                    # hevc | h264 | av1\nQP=${QP:-}                              # empty = per-codec default (see usage)\nVAAPI_DEVICE=${VAAPI_DEVICE:-}          # e.g. /dev/dri/renderD129; empty = auto-detect the dGPU\nAAC_KBPS_PER_CH=${AAC_KBPS_PER_CH:-96}  # bitrate for audio that has to be re-encoded\nSYSFS=${SYSFS:-/sys}\nDRI_DIR=${DRI_DIR:-/dev/dri}\n\n# Audio that MP4 carries well is copied untouched; the rest (DTS, TrueHD, PCM,\n# Vorbis...) is re-encoded to AAC. Text subs become mov_text. Picture subs (PGS,\n# VobSub, DVB) can't be stored in MP4, so they are left out and reported.\nreadonly COPY_AUDIO=' aac ac3 eac3 mp3 mp2 opus flac alac '\nreadonly TEXT_SUBS=' subrip srt ass ssa webvtt mov_text text microdvd subviewer subviewer1 sami mpl2 realtext '\nreadonly HIGH_DEPTH='(10|12|14|16)[bl]e$'   # pix_fmt suffix of >8-bit video, e.g. yuv420p10le\n\nNODE='' CUR_TMP='' TAG='' FF_PID=''\nn_ok=0 n_skip=0 n_fail=0\n\nlog()   { printf '%s: %s\\n' \"$PROG\" \"$*\" >&2; }\ndie()   { log \"error: $*\"; exit 1; }\nneed()  { command -v \"$1\" >/dev/null 2>&1 || die \"missing '$1' (sudo pacman -S --needed ${2:-$1})\"; }\nusage() {\n  cat <<EOF\nUsage: $PROG [-n] [-c hevc|h264|av1] [-q QP] DIR|FILE...\nConvert every .mkv under DIR (recursively) to an .mp4 beside it, with the video\nencoded on the AMD GPU via VAAPI. MKVs whose .mp4 already exists are skipped.\n  -c CODEC  video codec: hevc (default), h264, av1\n  -q QP     constant quality, lower = better and bigger\n            defaults: hevc 24, h264 22, av1 96 (AV1 uses a 0-255 scale)\n  -n        dry run: show what would be done, write nothing\n  -h        this help\nEnv: VAAPI_DEVICE=/dev/dri/renderD129 picks the render node by hand.\nEOF\n}\n\nsummary() {\n  local verb=converted\n  if ((DRY_RUN)); then verb='to convert'; fi\n  log \"done: $n_ok $verb, $n_skip skipped, $n_fail failed\"\n}\ndrop_tmp()  { if [[ -n $CUR_TMP ]]; then rm -f -- \"$CUR_TMP\"; fi; CUR_TMP=''; }\non_signal() {\n  log \"interrupted\"\n  # The partial output is discarded anyway, so stop ffmpeg now rather than let it finalize.\n  if [[ -n $FF_PID ]]; then kill -KILL \"$FF_PID\" 2>/dev/null || true; wait \"$FF_PID\" 2>/dev/null || true; fi\n  summary\n  exit \"$1\"\n}\ntrap drop_tmp EXIT\ntrap 'on_signal 130' INT\ntrap 'on_signal 143' TERM\ntrap 'log \"failed at line $LINENO: $BASH_COMMAND\"' ERR\n\n# Ryzen 9000 has an amdgpu iGPU too, and card/renderD numbers aren't stable, so take\n# the AMD card with the most VRAM and the render node on the same PCI device.\nfind_render_node() {\n  local card vendor vram best='' best_vram=-1 r\n  for card in \"$SYSFS\"/class/drm/card*; do\n    [[ ${card##*/} =~ ^card[0-9]+$ ]] || continue\n    read -r vendor 2>/dev/null <\"$card/device/vendor\" || continue\n    [[ $vendor == 0x1002 ]] || continue\n    read -r vram 2>/dev/null <\"$card/device/mem_info_vram_total\" || vram=0\n    [[ $vram =~ ^[0-9]+$ ]] || vram=0\n    if ((vram > best_vram)); then best=$card best_vram=$vram; fi\n  done\n  [[ -n $best ]] || return 1\n  best=$(readlink -f -- \"$best/device\")\n  for r in \"$SYSFS\"/class/drm/renderD*; do\n    if [[ $(readlink -f -- \"$r/device\") == \"$best\" ]]; then NODE=$DRI_DIR/${r##*/}; return 0; fi\n  done\n  return 1\n}\n\n# Fail fast (missing VAAPI driver, encoder unsupported) before touching any file.\ntest_encoder() {\n  local err\n  if ! err=$(ffmpeg -nostdin -hide_banner -loglevel error \\\n      -init_hw_device \"vaapi=va:$NODE\" -filter_hw_device va \\\n      -f lavfi -i testsrc2=size=640x360:rate=30:duration=0.5 \\\n      -vf 'format=nv12,hwupload' -c:v \"${CODEC}_vaapi\" -f null - 2>&1); then\n    die \"test encode with ${CODEC}_vaapi on $NODE failed: ${err:-no output}\n  check the driver with: vainfo --display drm --device $NODE\"\n  fi\n}\n\n# \"5025.042000\" -> milliseconds, into the variable named by $2 (0 if unknown)\nto_ms() {\n  local frac=0\n  if [[ $1 =~ ^([0-9]+)(\\.([0-9]+))?$ ]]; then\n    frac=${BASH_REMATCH[3]}000\n    printf -v \"$2\" '%d' $((10#${BASH_REMATCH[1]} * 1000 + 10#${frac:0:3}))\n  else\n    printf -v \"$2\" '%d' 0\n  fi\n}\n\n# Returns 0 converted, 1 failed, 2 skipped. Called in an `||` context, so set -e\n# is off in here and every step checks its own result.\nconvert_one() {\n  local src=$1 dir name stem out tmp probe line f idx type codec ch pix pic lang\n  local dur='' vidx='' vpix='' fmt=nv12 vf o=1 rc=1 attempt d src_ms out_ms start=$SECONDS\n  local -a fields=() maps=() codecs=() dropped=() venc=() cmd=()\n  dir=${src%/*} name=${src##*/}\n  stem=${name%.*}\n  out=$dir/$stem.mp4\n  tmp=$dir/.$stem.mp4.part   # same folder, so the final mv is atomic\n\n  if [[ -s $out ]]; then log \"$TAG skip, already converted: $out\"; return 2; fi\n  if [[ ! -w $dir ]]; then log \"$TAG FAIL, folder not writable: $dir\"; return 1; fi\n  if ! probe=$(ffprobe -v error -of compact=p=0 -show_entries \\\n      'format=duration:stream=index,codec_type,codec_name,channels,pix_fmt:stream_disposition=attached_pic:stream_tags=language' \\\n      \"file:$src\"); then\n    log \"$TAG FAIL, ffprobe can't read: $src\"; return 1\n  fi\n\n  while IFS= read -r line; do\n    idx='' type='' codec='' ch='' pix='' pic=0 lang=''\n    IFS='|' read -ra fields <<<\"$line\"\n    for f in \"${fields[@]}\"; do\n      case $f in\n        index=*) idx=${f#*=} ;;            codec_type=*) type=${f#*=} ;;\n        codec_name=*) codec=${f#*=} ;;     channels=*) ch=${f#*=} ;;\n        pix_fmt=*) pix=${f#*=} ;;          disposition:attached_pic=*) pic=${f#*=} ;;\n        tag:language=*) lang=${f#*=} ;;    duration=*) dur=${f#*=} ;;\n      esac\n    done\n    [[ -n $idx ]] || continue\n    case $type in\n      video)\n        # MKV cover art shows up as an attached-picture video stream: never encode it.\n        if [[ $pic != 0 ]]; then continue; fi\n        if [[ -z $vidx ]]; then vidx=$idx vpix=$pix; else dropped+=(\"#$idx extra video track\"); fi ;;\n      audio)\n        maps+=(-map \"0:$idx\")\n        if [[ $COPY_AUDIO == *\" $codec \"* ]]; then\n          codecs+=(\"-c:$o\" copy)\n        else\n          [[ $ch =~ ^[1-9][0-9]*$ ]] || ch=2\n          codecs+=(\"-c:$o\" aac \"-b:$o\" \"$((ch * AAC_KBPS_PER_CH))k\")\n        fi\n        o=$((o + 1)) ;;\n      subtitle)\n        if [[ $TEXT_SUBS == *\" $codec \"* ]]; then\n          maps+=(-map \"0:$idx\"); codecs+=(\"-c:$o\" mov_text); o=$((o + 1))\n        else\n          dropped+=(\"#$idx picture subtitle $codec${lang:+ ($lang)}\")\n        fi ;;\n    esac\n  done <<<\"$probe\"\n\n  if [[ -z $vidx ]]; then log \"$TAG FAIL, no video stream: $src\"; return 1; fi\n  if ((${#dropped[@]})); then\n    printf -v f '%s, ' \"${dropped[@]}\"\n    log \"$TAG note, not carried over to MP4: ${f%, }\"\n  fi\n\n  if [[ $vpix =~ $HIGH_DEPTH && $CODEC != h264 ]]; then fmt=p010; fi\n  # \"|vaapi\" lets GPU-decoded frames pass straight through hwupload, while\n  # CPU-decoded frames get converted and uploaded.\n  vf=\"format=$fmt|vaapi,hwupload\"\n  # h264_vaapi is 8-bit only, so GPU-decoded 10-bit frames are converted on the GPU.\n  if [[ $CODEC == h264 && $vpix =~ $HIGH_DEPTH ]]; then vf+=',scale_vaapi=format=nv12'; fi\n  venc=(-vf \"$vf\" -c:v \"${CODEC}_vaapi\" -rc_mode CQP -global_quality \"$QP\")\n  # hvc1 (not ffmpeg's default hev1) is what Apple/QuickTime and many TVs require.\n  if [[ $CODEC == hevc ]]; then venc+=(-tag:v hvc1); fi\n  maps=(-map \"0:$vidx\" \"${maps[@]}\")\n\n  # Try full-GPU decode+encode first; if the GPU can't decode the source\n  # (10-bit H.264, MPEG-4 ASP, ...), retry with CPU decode + GPU encode.\n  for attempt in gpu cpu; do\n    cmd=(ffmpeg -nostdin -hide_banner -loglevel error -stats -y\n      -init_hw_device \"vaapi=va:$NODE\" -filter_hw_device va)\n    if [[ $attempt == gpu ]]; then cmd+=(-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi); fi\n    cmd+=(-i \"file:$src\" \"${maps[@]}\" \"${venc[@]}\" \"${codecs[@]}\"\n      -max_muxing_queue_size 4096 -movflags +faststart -f mp4 \"file:$tmp\")\n    if ((DRY_RUN)); then log \"$TAG would run: $(printf '%q ' \"${cmd[@]}\")\"; return 0; fi\n\n    log \"$TAG converting ($attempt decode): $src\"\n    CUR_TMP=$tmp rc=0\n    # Run in the background and wait, so Ctrl+C / kill take effect immediately\n    # instead of after the current file finishes.\n    \"${cmd[@]}\" &\n    FF_PID=$!\n    wait \"$FF_PID\" || rc=$?\n    FF_PID=''\n    if ((rc == 0)); then break; fi\n    drop_tmp\n    # ffmpeg exits 255 when it caught Ctrl+C: stop the batch instead of retrying.\n    if ((rc == 255)); then on_signal 130; fi\n    if [[ $attempt == gpu ]]; then log \"$TAG failed with GPU decode (exit $rc), retrying with CPU decode\"; fi\n  done\n  if ((rc != 0)); then log \"$TAG FAIL, ffmpeg exit $rc: $src\"; return 1; fi\n\n  # A truncated output would be skipped forever on reruns, so check before keeping it.\n  to_ms \"$dur\" src_ms\n  out_ms=0\n  if d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 \"file:$tmp\"); then to_ms \"$d\" out_ms; fi\n  if ((out_ms == 0 || out_ms < src_ms * 9 / 10)); then\n    drop_tmp; log \"$TAG FAIL, output too short ($((out_ms / 1000))s of $((src_ms / 1000))s): $src\"; return 1\n  fi\n  if ! mv -f -- \"$tmp\" \"$out\"; then drop_tmp; log \"$TAG FAIL, can't move output into place: $out\"; return 1; fi\n  CUR_TMP=''\n  log \"$TAG ok ($((SECONDS - start))s): $out\"\n}\n\nmain() {\n  local opt f qmax i=0 rc\n  local -a roots=() files=()\n  while getopts ':nc:q:h' opt; do\n    case $opt in\n      n) DRY_RUN=1 ;;\n      c) CODEC=$OPTARG ;;\n      q) QP=$OPTARG ;;\n      h) usage; exit 0 ;;\n      :) usage >&2; die \"-$OPTARG needs a value\" ;;\n      *) usage >&2; exit 2 ;;\n    esac\n  done\n  shift $((OPTIND - 1))\n  if (($# == 0)); then usage >&2; exit 2; fi\n\n  case $CODEC in\n    hevc) : \"${QP:=24}\"; qmax=51 ;;\n    h264) : \"${QP:=22}\"; qmax=51 ;;\n    av1)  : \"${QP:=96}\"; qmax=255 ;;\n    *) die \"unknown codec '$CODEC' (use hevc, h264 or av1)\" ;;\n  esac\n  if ! [[ $QP =~ ^[0-9]+$ ]] || ((10#$QP > qmax)); then die \"QP must be 0-$qmax for $CODEC, got '$QP'\"; fi\n  QP=$((10#$QP))\n\n  for f in \"$@\"; do\n    [[ -e $f ]] || die \"no such file or folder: $f\"\n    if [[ $f == -* ]]; then f=./$f; fi   # find would read a leading-dash name as an option\n    roots+=(\"$f\")\n  done\n\n  need ffmpeg\n  need ffprobe ffmpeg\n  need flock util-linux\n\n  if [[ -n $VAAPI_DEVICE ]]; then\n    NODE=$VAAPI_DEVICE\n  elif ! find_render_node; then\n    die \"no AMD GPU render node found; set VAAPI_DEVICE=/dev/dri/renderD12x\"\n  fi\n  [[ -r $NODE && -w $NODE ]] || die \"can't open $NODE (missing, or no permission)\"\n  log \"using $NODE with ${CODEC}_vaapi, QP $QP\"\n\n  if ((!DRY_RUN)); then\n    # Two runs at once would fight over the GPU and the same temp files.\n    exec 9>\"${XDG_RUNTIME_DIR:-/tmp}/mkv2mp4.lock\"\n    flock -n 9 || die \"another $PROG run is already active\"\n    test_encoder\n  fi\n\n  # Skip desktop trash folders (.Trash-1000) on external drives.\n  mapfile -d '' files < <(find -H \"${roots[@]}\" -name '.Trash-*' -prune -o \\\n    -type f -iname '*.mkv' -print0 | sort -z)\n  if ((${#files[@]} == 0)); then log \"no .mkv files found\"; exit 0; fi\n\n  for f in \"${files[@]}\"; do\n    i=$((i + 1))\n    TAG=\"[$i/${#files[@]}]\"\n    if [[ $f != */* ]]; then f=./$f; fi\n    rc=0\n    convert_one \"$f\" || rc=$?\n    case $rc in\n      0) n_ok=$((n_ok + 1)) ;;\n      2) n_skip=$((n_skip + 1)) ;;\n      *) n_fail=$((n_fail + 1)) ;;\n    esac\n  done\n  summary\n  ((n_fail == 0)) || exit 1\n}\n\nmain \"$@\"\n```\n\nRun:\n\n```fish\nsudo pacman -S --needed ffmpeg libva-utils\ninstall -Dm755 mkv2mp4.sh ~/.local/bin/mkv2mp4\nfish_add_path ~/.local/bin\nmkv2mp4 -n ~/Videos    # dry run: lists what would be converted and which streams get dropped\nmkv2mp4 ~/Videos\n```\n\n- Defaults: HEVC (tagged `hvc1`) at CQP 24, with each `.mp4` written next to its `.mkv`. Use `-c h264` for older devices, `-c av1` for AV1, and `-q` to change quality. AAC, AC3, EAC3, MP3, Opus and FLAC tracks are copied as-is. DTS, TrueHD, PCM and Vorbis tracks are converted to AAC. The MKVs are never changed or deleted.\n- MP4 can't store picture subtitles (Blu-ray PGS, DVD VobSub), ASS styling or attached fonts. Picture subs are left out and listed per file, and ASS subs are kept as plain text.\n- Untested here because the sandbox has no GPU: the actual VAAPI encode on the 9070 XT. The script picks the 9070 XT's render node rather than the Ryzen iGPU's, does a 0.5 s test encode before it starts, and retries a file with CPU decoding if GPU decoding fails.\n\nVerified: shellcheck clean; 29 checks passed on stubbed runs over 13 edge-case MKVs (real PGS and VobSub tracks, 8 audio codecs, cover art, 10-bit video, odd filenames), including rerun, dry run, a failed GPU decode, and Ctrl+C partway through.\n"}], "grading": {"expectations": [{"text": "Script passes bash -n and shellcheck with no errors or warnings", "passed": true, "evidence": "bash -n ok; shellcheck 0.11 clean at style level (no findings)."}, {"text": "Uses a VAAPI hardware encoder (hevc_vaapi, h264_vaapi or av1_vaapi)", "passed": true, "evidence": "-c:v \"${CODEC}_vaapi\" with hevc default (line 171); test_encoder probes it before any file."}, {"text": "Picks the RX 9070 XT render node by detection or override instead of hard-coding renderD128", "passed": true, "evidence": "find_render_node(): AMD (0x1002) card with most mem_info_vram_total, then renderD* on the same PCI device; VAAPI_DEVICE env override."}, {"text": "Recursive file iteration is safe for any filename (null-delimited find or glob arrays, quoted)", "passed": true, "evidence": "mapfile -d '' from find -print0 | sort -z; all expansions quoted; leading-dash roots prefixed with ./."}, {"text": "ffmpeg cannot swallow the loop's stdin (-nostdin or </dev/null)", "passed": true, "evidence": "ffmpeg and test encode both use -nostdin; loop iterates an array, not stdin."}, {"text": "Paths passed to ffmpeg can't be misread as options or protocols (absolute, ./ or file: prefix)", "passed": true, "evidence": "All ffmpeg/ffprobe paths use the file: prefix (lines 120, 182-183, 205); bare names get ./."}, {"text": "Handles MP4 subtitle limits: text subs to mov_text, image subs (PGS/VobSub) dropped or handled without failing the file", "passed": true, "evidence": "TEXT_SUBS -> mov_text; PGS/VobSub/DVB are left out and listed per file in a log note; the file still converts."}, {"text": "Writes to a temp file and renames on success, so an interrupted encode isn't treated as done", "passed": true, "evidence": "Writes to .<stem>.mp4.part in the same dir, validates duration >= 90% of source, then mv -f; EXIT/INT/TERM traps delete the partial."}, {"text": "Skips files whose output already exists (idempotent rerun)", "passed": true, "evidence": "[[ -s $out ]] -> skip (return 2) before probing."}, {"text": "One file failing doesn't abort the batch; ends with a summary and non-zero exit if anything failed", "passed": true, "evidence": "convert_one in || context, per-file rc counted ok/skip/fail; summary(); exit 1 if n_fail>0."}, {"text": "Run commands in the reply are valid fish syntax (no heredocs, <(), [[ ]], $?, for/do/done, bare VAR=)", "passed": true, "evidence": "Run block: pacman install, install -Dm755, fish_add_path, mkv2mp4 -n / mkv2mp4: all valid fish."}, {"text": "Reply is code-only: no intro or walkthrough, at most 3 short notes plus an optional Verified line", "passed": true, "evidence": "Outside code: 'Run:', 3 bullets, 1 Verified line. No intro or walkthrough. (Bullets are wordier than 'terse'.)"}], "summary": {"passed": 12, "failed": 0, "total": 12, "pass_rate": 1.0}}}, {"id": "eval-1-mkv-to-mp4-vaapi-without_skill-run-1", "prompt": "write me a script that converts all the mkv files in a folder (including subfolders) to mp4 using my RX 9070 XT for hardware encoding. keep all the audio tracks and subtitles if possible, and skip anything that's already been converted so I can rerun it", "eval_id": 1, "outputs": [{"name": "mkv2mp4.sh", "type": "text", "content": "#!/usr/bin/env bash\n#\n# mkv2mp4.sh - Recursively convert .mkv files to .mp4 using AMD VAAPI\n#              hardware encoding (written for an RX 9070 XT on Linux/Mesa).\n#\n#   * Video  : re-encoded on the GPU (HEVC by default, AV1 or H.264 optional).\n#              10-bit/HDR sources stay 10-bit with HEVC/AV1.\n#   * Audio  : every track kept. MP4-friendly codecs are copied bit-for-bit;\n#              anything else is re-encoded (lossless -> FLAC, lossy -> AAC).\n#   * Subs   : text subs (SRT/ASS/WebVTT) are converted to MP4 text subs.\n#              Picture subs (PGS/VobSub/DVB) can't live in MP4, so they're\n#              saved next to the MP4 as sidecar files (.sup / .mks).\n#   * Chapters and metadata are kept. Font attachments are dropped.\n#   * Re-runnable: a file is skipped if its .mp4 already exists. Output is\n#     written to a temp file and only renamed when ffmpeg finishes cleanly,\n#     so an interrupted run never leaves a half-file that looks \"done\".\n#\n# Usage: mkv2mp4.sh [options] [DIR]      (DIR defaults to the current dir)\n# Run with --help for options.\n\nset -uo pipefail\n\n# ----------------------------------------------------------------------------\n# Defaults (edit here or override with command-line flags)\n# ----------------------------------------------------------------------------\nCODEC=\"hevc\"            # hevc | av1 | h264\nQUALITY=\"\"              # constant QP; empty = per-codec default below. Lower = better/bigger\nDEVICE=\"\"               # e.g. /dev/dri/renderD128; empty = auto-pick the AMD GPU with most VRAM\nCOPY_VIDEO=0            # 1 = don't re-encode video that's already H.264/HEVC/AV1 (pure remux)\nDEINTERLACE=1           # auto-deinterlace sources flagged as interlaced (DVD/1080i)\nDRY_RUN=0\n\n# Audio codecs copied untouched into the MP4. Everything else gets re-encoded:\n# lossless (TrueHD, DTS-HD MA, PCM) -> FLAC, lossy (Vorbis, MP2, ...) -> AAC.\n# Remove \"dts\" / \"opus\" / \"flac\" if your player (e.g. Apple devices) can't handle them.\n# (TrueHD isn't listed on purpose: ffmpeg's TrueHD-in-MP4 muxing is experimental\n#  and produced broken files in testing, so it's converted to FLAC instead.)\nCOPY_AUDIO=\"aac ac3 eac3 mp3 opus flac alac dts\"\nAAC_KBPS_PER_CHANNEL=96  # bitrate for lossy->AAC re-encodes (stereo=192k, 5.1=576k)\n\ndeclare -A DEFAULT_QUALITY=( [hevc]=24 [h264]=21 [av1]=110 )   # AV1 scale is 0-255\ndeclare -A ENCODER=( [hevc]=hevc_vaapi [h264]=h264_vaapi [av1]=av1_vaapi )\n\n# ----------------------------------------------------------------------------\nusage() {\n    cat <<EOF\nUsage: ${0##*/} [options] [DIR]\n\nRecursively converts every .mkv under DIR (default: current directory) to an\n.mp4 next to it, using VAAPI hardware encoding on your AMD GPU.\nFiles whose .mp4 already exists are skipped, so it's safe to re-run.\n\nOptions:\n  -c, --codec CODEC     hevc (default), av1, or h264\n  -q, --quality N       constant QP. Lower = better quality, bigger files.\n                        Defaults: hevc ${DEFAULT_QUALITY[hevc]}, h264 ${DEFAULT_QUALITY[h264]} (0-51), av1 ${DEFAULT_QUALITY[av1]} (0-255)\n  -d, --device PATH     VAAPI render node (default: auto-detect discrete AMD GPU)\n      --copy-video      don't re-encode video that's already H.264/HEVC/AV1;\n                        just remux it (lossless and very fast)\n      --no-deinterlace  don't deinterlace sources flagged as interlaced\n  -n, --dry-run         show what would be done, don't convert anything\n  -h, --help            show this help\n\nExamples:\n  ${0##*/} ~/Videos\n  ${0##*/} --codec av1 --quality 100 /mnt/media/Movies\n  ${0##*/} --dry-run .\nEOF\n}\n\ndie()  { printf '\\e[31mError:\\e[0m %s\\n' \"$*\" >&2; exit 1; }\nwarn() { printf '  \\e[33mwarning:\\e[0m %s\\n' \"$*\" >&2; }\ninfo() { printf '  %s\\n' \"$*\"; }\n\n# Pick the AMD render node with the most VRAM, so a Ryzen iGPU (if enabled in\n# BIOS) doesn't get chosen over the RX 9070 XT.\ndetect_device() {\n    local node vram best=\"\" best_vram=-1\n    for node in /sys/class/drm/renderD*; do\n        [[ -r $node/device/vendor ]] || continue\n        [[ $(<\"$node/device/vendor\") == 0x1002 ]] || continue      # AMD\n        vram=0\n        [[ -r $node/device/mem_info_vram_total ]] && vram=$(<\"$node/device/mem_info_vram_total\")\n        if (( vram > best_vram )); then best_vram=$vram; best=/dev/dri/${node##*/}; fi\n    done\n    printf '%s\\n' \"${best:-/dev/dri/renderD128}\"\n}\n\n# Input-side args: open the GPU, decode on it when possible (falls back to CPU\n# decoding automatically for formats the GPU can't decode).\nhw_input_args() {\n    printf '%s\\0' -init_hw_device \"vaapi=va:$DEVICE\" -filter_hw_device va \\\n                  -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi\n}\n\n# Video encode args. $1 = sw pixel format (nv12 / p010), $2 = extra filters\n# to run on the GPU after upload (e.g. deinterlace), may be empty.\nvideo_encode_args() {\n    local fmt=$1 extra=$2 vf\n    # \"format=X|vaapi,hwupload\" passes GPU-decoded frames straight through and\n    # uploads CPU-decoded ones; scale_vaapi then normalises the pixel format.\n    vf=\"format=$fmt|vaapi,hwupload${extra:+,$extra},scale_vaapi=format=$fmt\"\n    printf '%s\\0' -vf \"$vf\" -c:v \"${ENCODER[$CODEC]}\" -rc_mode CQP -global_quality \"$QUALITY\"\n    case $CODEC in\n        hevc) printf '%s\\0' -profile:v \"$([[ $fmt == p010 ]] && echo main10 || echo main)\" -tag:v hvc1 ;;\n        h264) printf '%s\\0' -profile:v high ;;\n    esac\n}\n\n# Quick test encode so a broken driver setup fails fast with a clear message.\npreflight() {\n    command -v ffmpeg  >/dev/null || die \"ffmpeg not found (sudo pacman -S ffmpeg)\"\n    command -v ffprobe >/dev/null || die \"ffprobe not found (comes with ffmpeg)\"\n    [[ -e $DEVICE ]] || die \"VAAPI device $DEVICE doesn't exist\"\n    local out\n    if ! out=$(ffmpeg -hide_banner -nostdin -loglevel error \\\n            -init_hw_device \"vaapi=va:$DEVICE\" -filter_hw_device va \\\n            -f lavfi -i testsrc2=size=1280x720:rate=30 -frames:v 10 \\\n            -vf \"format=nv12,hwupload\" -c:v \"${ENCODER[$CODEC]}\" \\\n            -rc_mode CQP -global_quality \"$QUALITY\" -f null - 2>&1); then\n        printf '%s\\n' \"$out\" >&2\n        die \"Test encode with ${ENCODER[$CODEC]} on $DEVICE failed.\n       Check 'vainfo' lists VAEntrypointEncSlice for your codec, that Mesa's\n       VA-API driver is installed, and that you're in the 'render'/'video' group.\"\n    fi\n}\n\nprobe_duration() {\n    ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 -- \"$1\" 2>/dev/null\n}\n\nis_lossless_audio() {   # $1 = codec, $2 = profile\n    case $1 in\n        truehd|mlp|pcm_*|wavpack|tta|ape|shorten|tak) return 0 ;;\n        dts) [[ $2 == *MA* ]] && return 0 ;;      # DTS-HD Master Audio\n    esac\n    return 1\n}\n\n# ----------------------------------------------------------------------------\n# Convert one file. Returns 0 = converted, 1 = failed.\n# ----------------------------------------------------------------------------\nCURRENT_TMP=()\n\nconvert_one() {\n    local src=$1 out=$2\n    local base=${out%.mp4} tmp=\"$out.partial\"\n    local -a args=() sidecars=() sidecar_args=()\n    local -A f=() used_names=()\n    local line kv vidx=\"\" vcodec=\"\" pixfmt=\"\" field=\"\" a=0 s=0 sub_n=0\n\n    # ---- probe all streams --------------------------------------------------\n    local probe\n    probe=$(ffprobe -v error -show_entries \\\n        stream=index,codec_type,codec_name,profile,pix_fmt,channels,field_order:stream_tags=language:stream_disposition=attached_pic,forced \\\n        -of compact=p=0 -- \"$src\") || { warn \"ffprobe couldn't read the file\"; return 1; }\n\n    args=(-hide_banner -nostdin -loglevel error -stats -y)\n    local -a hw=(); mapfile -d '' hw < <(hw_input_args)\n    args+=(\"${hw[@]}\" -i \"$src\")\n\n    # First real video stream (skip cover-art \"video\" streams)\n    while IFS= read -r line; do\n        f=(); IFS='|' read -ra kvs <<< \"$line\"\n        for kv in \"${kvs[@]}\"; do [[ $kv == ?*=* ]] && f[${kv%%=*}]=${kv#*=}; done\n        if [[ ${f[codec_type]:-} == video && ${f[disposition:attached_pic]:-0} != 1 ]]; then\n            vidx=${f[index]}; vcodec=${f[codec_name]}; pixfmt=${f[pix_fmt]:-}; field=${f[field_order]:-}\n            break\n        fi\n    done <<< \"$probe\"\n    [[ -n $vidx ]] || { warn \"no video stream found\"; return 1; }\n\n    # ---- video ---------------------------------------------------------------\n    args+=(-map \"0:$vidx\")\n    local copy_v=0 why=\"\"\n    if (( COPY_VIDEO )) && [[ $vcodec == h264 || $vcodec == hevc || $vcodec == av1 ]]; then\n        copy_v=1; why=\"--copy-video\"\n    elif [[ $vcodec == hevc ]] && \\\n         ffprobe -v error -select_streams \"$vidx\" -show_entries stream_side_data=dv_profile \\\n                 -of compact=p=0 -- \"$src\" 2>/dev/null | grep -qE 'dv_profile=5\\b'; then\n        # Dolby Vision profile 5 has no HDR10 base layer; re-encoding it gives\n        # green/purple colours, so remux it untouched instead.\n        copy_v=1; why=\"Dolby Vision profile 5\"\n    fi\n\n    if (( copy_v )); then\n        info \"video: $vcodec -> copy ($why)\"\n        args+=(-c:v copy)\n        [[ $vcodec == hevc ]] && args+=(-tag:v hvc1)\n    else\n        local fmt=nv12 depth=8-bit extra=\"\" hibit_re='(10|12)(le|be)?$|^p01[06]'\n        # HEVC/AV1 keep 10/12-bit sources at 10-bit (needed for HDR); H.264 is 8-bit only.\n        if [[ $CODEC != h264 && $pixfmt =~ $hibit_re ]]; then fmt=p010; depth=10-bit; fi\n        if (( DEINTERLACE )) && [[ $field == tt || $field == bb || $field == tb || $field == bt ]]; then\n            extra=\"deinterlace_vaapi\"\n        fi\n        info \"video: $vcodec ($pixfmt${extra:+, interlaced}) -> ${ENCODER[$CODEC]} $depth QP $QUALITY\"\n        local -a v=(); mapfile -d '' v < <(video_encode_args \"$fmt\" \"$extra\")\n        args+=(\"${v[@]}\")\n    fi\n\n    # ---- audio + subtitles -------------------------------------------------\n    while IFS= read -r line; do\n        f=(); IFS='|' read -ra kvs <<< \"$line\"\n        for kv in \"${kvs[@]}\"; do [[ $kv == ?*=* ]] && f[${kv%%=*}]=${kv#*=}; done\n        local idx=${f[index]:-} codec=${f[codec_name]:-unknown} lang=${f[tag:language]:-und}\n\n        case ${f[codec_type]:-} in\n        audio)\n            args+=(-map \"0:$idx\")\n            if [[ \" $COPY_AUDIO \" == *\" $codec \"* ]]; then\n                args+=(\"-c:a:$a\" copy); info \"audio #$a ($lang): $codec -> copy\"\n            elif is_lossless_audio \"$codec\" \"${f[profile]:-}\"; then\n                args+=(\"-c:a:$a\" flac); info \"audio #$a ($lang): $codec -> flac (lossless)\"\n            else\n                local ch=${f[channels]:-2}\n                args+=(\"-c:a:$a\" aac \"-b:a:$a\" \"$(( ch * AAC_KBPS_PER_CHANNEL ))k\")\n                info \"audio #$a ($lang): $codec -> aac $(( ch * AAC_KBPS_PER_CHANNEL ))k\"\n            fi\n            (( a++ ))\n            ;;\n        subtitle)\n            (( sub_n++ ))\n            case $codec in\n            subrip|srt|ass|ssa|webvtt|mov_text|text)\n                args+=(-map \"0:$idx\" \"-c:s:$s\" mov_text)\n                info \"subs  #$s ($lang): $codec -> mov_text\"\n                (( s++ ))\n                ;;\n            hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub)\n                local ext=mks muxer=matroska forced=\"\" name\n                [[ $codec == hdmv_pgs_subtitle ]] && { ext=sup; muxer=sup; }\n                [[ ${f[disposition:forced]:-0} == 1 ]] && forced=\".forced\"\n                name=\"$base.$lang$forced.$ext\"\n                [[ -n ${used_names[$name]:-} ]] && name=\"$base.$lang$forced.$sub_n.$ext\"\n                used_names[$name]=1\n                sidecars+=(\"$name\")\n                sidecar_args+=(-map \"0:$idx\" -c copy -map_chapters -1 -f \"$muxer\" \"$name\")\n                info \"subs   ($lang): $codec -> sidecar ${name##*/}\"\n                ;;\n            *)\n                warn \"subtitle track $idx ($codec) can't be stored in MP4 - dropped\"\n                ;;\n            esac\n            ;;\n        esac\n    done <<< \"$probe\"\n\n    args+=(-map_metadata 0 -map_chapters 0 -max_muxing_queue_size 4096\n           -movflags +faststart -f mp4 \"$tmp\")\n    args+=(\"${sidecar_args[@]}\")\n\n    if (( DRY_RUN )); then\n        printf '  [dry-run] ffmpeg'; printf ' %q' \"${args[@]}\"; printf '\\n'\n        return 0\n    fi\n\n    # ---- run -------------------------------------------------------------------\n    CURRENT_TMP=(\"$tmp\" \"${sidecars[@]}\")\n    if ! ffmpeg \"${args[@]}\"; then\n        rm -f -- \"${CURRENT_TMP[@]}\"; CURRENT_TMP=()\n        return 1\n    fi\n\n    # Sanity check: output must be readable and roughly as long as the source.\n    local din dout\n    din=$(probe_duration \"$src\"); dout=$(probe_duration \"$tmp\")\n    if [[ -z $dout ]]; then\n        warn \"output is unreadable\"; rm -f -- \"${CURRENT_TMP[@]}\"; CURRENT_TMP=(); return 1\n    fi\n    # (small differences are normal - e.g. a subtitle track ending after the video)\n    if [[ -n $din ]] && awk -v i=\"$din\" -v o=\"$dout\" 'BEGIN{exit !(o < i*0.97 - 5)}'; then\n        warn \"output is shorter than the source (${dout%.*}s vs ${din%.*}s) - check it\"\n        SHORT+=(\"$out\")\n    fi\n\n    mv -f -- \"$tmp\" \"$out\"\n    CURRENT_TMP=()\n    return 0\n}\n\n# ----------------------------------------------------------------------------\nmain() {\n    local dir=\"\"\n    while (( $# )); do\n        case $1 in\n            -c|--codec)      CODEC=${2:-}; shift 2 ;;\n            -q|--quality)    QUALITY=${2:-}; shift 2 ;;\n            -d|--device)     DEVICE=${2:-}; shift 2 ;;\n            --copy-video)    COPY_VIDEO=1; shift ;;\n            --no-deinterlace) DEINTERLACE=0; shift ;;\n            -n|--dry-run)    DRY_RUN=1; shift ;;\n            -h|--help)       usage; exit 0 ;;\n            --)              shift; dir=${1:-}; break ;;\n            -*)              die \"unknown option: $1 (see --help)\" ;;\n            *)               [[ -z $dir ]] || die \"only one directory, please\"; dir=$1; shift ;;\n        esac\n    done\n    dir=${dir:-.}\n    [[ -d $dir ]] || die \"not a directory: $dir\"\n    [[ -n ${ENCODER[$CODEC]:-} ]] || die \"codec must be hevc, av1 or h264\"\n    QUALITY=${QUALITY:-${DEFAULT_QUALITY[$CODEC]}}\n    [[ $QUALITY =~ ^[0-9]+$ ]] || die \"quality must be a number\"\n    DEVICE=${DEVICE:-$(detect_device)}\n\n    (( DRY_RUN )) || preflight\n\n    trap 'echo; rm -f -- \"${CURRENT_TMP[@]}\"; echo \"Interrupted - partial output removed.\"; exit 130' INT TERM\n\n    local -a files=()\n    mapfile -d '' files < <(find \"$dir\" -type f -iname '*.mkv' -print0 | sort -z)\n    (( ${#files[@]} )) || { echo \"No .mkv files found under $dir\"; exit 0; }\n\n    echo \"Device: $DEVICE   Encoder: ${ENCODER[$CODEC]}   QP: $QUALITY   Files: ${#files[@]}\"\n    local -a failed=(); SHORT=()\n    local done_n=0 skip_n=0 i=0 src out start\n\n    for src in \"${files[@]}\"; do\n        (( i++ ))\n        out=\"${src%.*}.mp4\"\n        if [[ -s $out ]] && [[ -n $(probe_duration \"$out\") ]]; then\n            printf '[%d/%d] skip (already converted): %s\\n' \"$i\" \"${#files[@]}\" \"$src\"\n            (( skip_n++ )); continue\n        fi\n        printf '\\n[%d/%d] %s\\n' \"$i\" \"${#files[@]}\" \"$src\"\n        start=$SECONDS\n        if convert_one \"$src\" \"$out\"; then\n            (( DRY_RUN )) || info \"done in $(( SECONDS - start ))s -> ${out##*/}\"\n            (( done_n++ ))\n        else\n            printf '  \\e[31mFAILED\\e[0m\\n'\n            failed+=(\"$src\")\n        fi\n    done\n\n    echo\n    echo \"$( (( DRY_RUN )) && echo \"Would convert\" || echo \"Converted\"): $done_n   Skipped: $skip_n   Failed: ${#failed[@]}\"\n    (( ${#SHORT[@]} )) && printf 'Check these (shorter than source): %s\\n' \"${SHORT[@]}\"\n    (( ${#failed[@]} )) && { printf 'Failed: %s\\n' \"${failed[@]}\"; exit 1; }\n    exit 0\n}\n\nif [[ ${BASH_SOURCE[0]} == \"$0\" ]]; then\n    main \"$@\"\nfi\n"}, {"name": "response.md", "type": "text", "content": "Here's a Bash script that does this with VA-API, the Linux hardware-encoding path for AMD cards. It finds every `.mkv` in a folder and all its subfolders and writes an `.mp4` with the same name next to it. It re-encodes the video on your 9070 XT and keeps every audio track, plus every subtitle track that MP4 can hold. If a file already has its `.mp4`, it gets skipped, so you can stop and re-run it whenever you like.\n\n## 1. One-time setup (CachyOS)\n\n```\nsudo pacman -S --needed ffmpeg libva-utils\nvainfo | grep -E 'Driver|EncSlice'\n```\n\n`vainfo` should name the Mesa radeonsi driver and list `VAEntrypointEncSlice` lines for HEVC, H.264 and AV1. On current Arch/CachyOS the VA-API driver is included in the `mesa` package. Older installs need `libva-mesa-driver`.\n\n## 2. The script\n\nSave it as `mkv2mp4.sh`, then run `chmod +x mkv2mp4.sh`. It has a `#!/usr/bin/env bash` line at the top, so it runs fine from fish.\n\n```bash\n#!/usr/bin/env bash\n#\n# mkv2mp4.sh - Recursively convert .mkv files to .mp4 using AMD VAAPI\n#              hardware encoding (written for an RX 9070 XT on Linux/Mesa).\n#\n#   * Video  : re-encoded on the GPU (HEVC by default, AV1 or H.264 optional).\n#              10-bit/HDR sources stay 10-bit with HEVC/AV1.\n#   * Audio  : every track kept. MP4-friendly codecs are copied bit-for-bit;\n#              anything else is re-encoded (lossless -> FLAC, lossy -> AAC).\n#   * Subs   : text subs (SRT/ASS/WebVTT) are converted to MP4 text subs.\n#              Picture subs (PGS/VobSub/DVB) can't live in MP4, so they're\n#              saved next to the MP4 as sidecar files (.sup / .mks).\n#   * Chapters and metadata are kept. Font attachments are dropped.\n#   * Re-runnable: a file is skipped if its .mp4 already exists. Output is\n#     written to a temp file and only renamed when ffmpeg finishes cleanly,\n#     so an interrupted run never leaves a half-file that looks \"done\".\n#\n# Usage: mkv2mp4.sh [options] [DIR]      (DIR defaults to the current dir)\n# Run with --help for options.\n\nset -uo pipefail\n\n# ----------------------------------------------------------------------------\n# Defaults (edit here or override with command-line flags)\n# ----------------------------------------------------------------------------\nCODEC=\"hevc\"            # hevc | av1 | h264\nQUALITY=\"\"              # constant QP; empty = per-codec default below. Lower = better/bigger\nDEVICE=\"\"               # e.g. /dev/dri/renderD128; empty = auto-pick the AMD GPU with most VRAM\nCOPY_VIDEO=0            # 1 = don't re-encode video that's already H.264/HEVC/AV1 (pure remux)\nDEINTERLACE=1           # auto-deinterlace sources flagged as interlaced (DVD/1080i)\nDRY_RUN=0\n\n# Audio codecs copied untouched into the MP4. Everything else gets re-encoded:\n# lossless (TrueHD, DTS-HD MA, PCM) -> FLAC, lossy (Vorbis, MP2, ...) -> AAC.\n# Remove \"dts\" / \"opus\" / \"flac\" if your player (e.g. Apple devices) can't handle them.\n# (TrueHD isn't listed on purpose: ffmpeg's TrueHD-in-MP4 muxing is experimental\n#  and produced broken files in testing, so it's converted to FLAC instead.)\nCOPY_AUDIO=\"aac ac3 eac3 mp3 opus flac alac dts\"\nAAC_KBPS_PER_CHANNEL=96  # bitrate for lossy->AAC re-encodes (stereo=192k, 5.1=576k)\n\ndeclare -A DEFAULT_QUALITY=( [hevc]=24 [h264]=21 [av1]=110 )   # AV1 scale is 0-255\ndeclare -A ENCODER=( [hevc]=hevc_vaapi [h264]=h264_vaapi [av1]=av1_vaapi )\n\n# ----------------------------------------------------------------------------\nusage() {\n    cat <<EOF\nUsage: ${0##*/} [options] [DIR]\n\nRecursively converts every .mkv under DIR (default: current directory) to an\n.mp4 next to it, using VAAPI hardware encoding on your AMD GPU.\nFiles whose .mp4 already exists are skipped, so it's safe to re-run.\n\nOptions:\n  -c, --codec CODEC     hevc (default), av1, or h264\n  -q, --quality N       constant QP. Lower = better quality, bigger files.\n                        Defaults: hevc ${DEFAULT_QUALITY[hevc]}, h264 ${DEFAULT_QUALITY[h264]} (0-51), av1 ${DEFAULT_QUALITY[av1]} (0-255)\n  -d, --device PATH     VAAPI render node (default: auto-detect discrete AMD GPU)\n      --copy-video      don't re-encode video that's already H.264/HEVC/AV1;\n                        just remux it (lossless and very fast)\n      --no-deinterlace  don't deinterlace sources flagged as interlaced\n  -n, --dry-run         show what would be done, don't convert anything\n  -h, --help            show this help\n\nExamples:\n  ${0##*/} ~/Videos\n  ${0##*/} --codec av1 --quality 100 /mnt/media/Movies\n  ${0##*/} --dry-run .\nEOF\n}\n\ndie()  { printf '\\e[31mError:\\e[0m %s\\n' \"$*\" >&2; exit 1; }\nwarn() { printf '  \\e[33mwarning:\\e[0m %s\\n' \"$*\" >&2; }\ninfo() { printf '  %s\\n' \"$*\"; }\n\n# Pick the AMD render node with the most VRAM, so a Ryzen iGPU (if enabled in\n# BIOS) doesn't get chosen over the RX 9070 XT.\ndetect_device() {\n    local node vram best=\"\" best_vram=-1\n    for node in /sys/class/drm/renderD*; do\n        [[ -r $node/device/vendor ]] || continue\n        [[ $(<\"$node/device/vendor\") == 0x1002 ]] || continue      # AMD\n        vram=0\n        [[ -r $node/device/mem_info_vram_total ]] && vram=$(<\"$node/device/mem_info_vram_total\")\n        if (( vram > best_vram )); then best_vram=$vram; best=/dev/dri/${node##*/}; fi\n    done\n    printf '%s\\n' \"${best:-/dev/dri/renderD128}\"\n}\n\n# Input-side args: open the GPU, decode on it when possible (falls back to CPU\n# decoding automatically for formats the GPU can't decode).\nhw_input_args() {\n    printf '%s\\0' -init_hw_device \"vaapi=va:$DEVICE\" -filter_hw_device va \\\n                  -hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi\n}\n\n# Video encode args. $1 = sw pixel format (nv12 / p010), $2 = extra filters\n# to run on the GPU after upload (e.g. deinterlace), may be empty.\nvideo_encode_args() {\n    local fmt=$1 extra=$2 vf\n    # \"format=X|vaapi,hwupload\" passes GPU-decoded frames straight through and\n    # uploads CPU-decoded ones; scale_vaapi then normalises the pixel format.\n    vf=\"format=$fmt|vaapi,hwupload${extra:+,$extra},scale_vaapi=format=$fmt\"\n    printf '%s\\0' -vf \"$vf\" -c:v \"${ENCODER[$CODEC]}\" -rc_mode CQP -global_quality \"$QUALITY\"\n    case $CODEC in\n        hevc) printf '%s\\0' -profile:v \"$([[ $fmt == p010 ]] && echo main10 || echo main)\" -tag:v hvc1 ;;\n        h264) printf '%s\\0' -profile:v high ;;\n    esac\n}\n\n# Quick test encode so a broken driver setup fails fast with a clear message.\npreflight() {\n    command -v ffmpeg  >/dev/null || die \"ffmpeg not found (sudo pacman -S ffmpeg)\"\n    command -v ffprobe >/dev/null || die \"ffprobe not found (comes with ffmpeg)\"\n    [[ -e $DEVICE ]] || die \"VAAPI device $DEVICE doesn't exist\"\n    local out\n    if ! out=$(ffmpeg -hide_banner -nostdin -loglevel error \\\n            -init_hw_device \"vaapi=va:$DEVICE\" -filter_hw_device va \\\n            -f lavfi -i testsrc2=size=1280x720:rate=30 -frames:v 10 \\\n            -vf \"format=nv12,hwupload\" -c:v \"${ENCODER[$CODEC]}\" \\\n            -rc_mode CQP -global_quality \"$QUALITY\" -f null - 2>&1); then\n        printf '%s\\n' \"$out\" >&2\n        die \"Test encode with ${ENCODER[$CODEC]} on $DEVICE failed.\n       Check 'vainfo' lists VAEntrypointEncSlice for your codec, that Mesa's\n       VA-API driver is installed, and that you're in the 'render'/'video' group.\"\n    fi\n}\n\nprobe_duration() {\n    ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 -- \"$1\" 2>/dev/null\n}\n\nis_lossless_audio() {   # $1 = codec, $2 = profile\n    case $1 in\n        truehd|mlp|pcm_*|wavpack|tta|ape|shorten|tak) return 0 ;;\n        dts) [[ $2 == *MA* ]] && return 0 ;;      # DTS-HD Master Audio\n    esac\n    return 1\n}\n\n# ----------------------------------------------------------------------------\n# Convert one file. Returns 0 = converted, 1 = failed.\n# ----------------------------------------------------------------------------\nCURRENT_TMP=()\n\nconvert_one() {\n    local src=$1 out=$2\n    local base=${out%.mp4} tmp=\"$out.partial\"\n    local -a args=() sidecars=() sidecar_args=()\n    local -A f=() used_names=()\n    local line kv vidx=\"\" vcodec=\"\" pixfmt=\"\" field=\"\" a=0 s=0 sub_n=0\n\n    # ---- probe all streams --------------------------------------------------\n    local probe\n    probe=$(ffprobe -v error -show_entries \\\n        stream=index,codec_type,codec_name,profile,pix_fmt,channels,field_order:stream_tags=language:stream_disposition=attached_pic,forced \\\n        -of compact=p=0 -- \"$src\") || { warn \"ffprobe couldn't read the file\"; return 1; }\n\n    args=(-hide_banner -nostdin -loglevel error -stats -y)\n    local -a hw=(); mapfile -d '' hw < <(hw_input_args)\n    args+=(\"${hw[@]}\" -i \"$src\")\n\n    # First real video stream (skip cover-art \"video\" streams)\n    while IFS= read -r line; do\n        f=(); IFS='|' read -ra kvs <<< \"$line\"\n        for kv in \"${kvs[@]}\"; do [[ $kv == ?*=* ]] && f[${kv%%=*}]=${kv#*=}; done\n        if [[ ${f[codec_type]:-} == video && ${f[disposition:attached_pic]:-0} != 1 ]]; then\n            vidx=${f[index]}; vcodec=${f[codec_name]}; pixfmt=${f[pix_fmt]:-}; field=${f[field_order]:-}\n            break\n        fi\n    done <<< \"$probe\"\n    [[ -n $vidx ]] || { warn \"no video stream found\"; return 1; }\n\n    # ---- video ---------------------------------------------------------------\n    args+=(-map \"0:$vidx\")\n    local copy_v=0 why=\"\"\n    if (( COPY_VIDEO )) && [[ $vcodec == h264 || $vcodec == hevc || $vcodec == av1 ]]; then\n        copy_v=1; why=\"--copy-video\"\n    elif [[ $vcodec == hevc ]] && \\\n         ffprobe -v error -select_streams \"$vidx\" -show_entries stream_side_data=dv_profile \\\n                 -of compact=p=0 -- \"$src\" 2>/dev/null | grep -qE 'dv_profile=5\\b'; then\n        # Dolby Vision profile 5 has no HDR10 base layer; re-encoding it gives\n        # green/purple colours, so remux it untouched instead.\n        copy_v=1; why=\"Dolby Vision profile 5\"\n    fi\n\n    if (( copy_v )); then\n        info \"video: $vcodec -> copy ($why)\"\n        args+=(-c:v copy)\n        [[ $vcodec == hevc ]] && args+=(-tag:v hvc1)\n    else\n        local fmt=nv12 depth=8-bit extra=\"\" hibit_re='(10|12)(le|be)?$|^p01[06]'\n        # HEVC/AV1 keep 10/12-bit sources at 10-bit (needed for HDR); H.264 is 8-bit only.\n        if [[ $CODEC != h264 && $pixfmt =~ $hibit_re ]]; then fmt=p010; depth=10-bit; fi\n        if (( DEINTERLACE )) && [[ $field == tt || $field == bb || $field == tb || $field == bt ]]; then\n            extra=\"deinterlace_vaapi\"\n        fi\n        info \"video: $vcodec ($pixfmt${extra:+, interlaced}) -> ${ENCODER[$CODEC]} $depth QP $QUALITY\"\n        local -a v=(); mapfile -d '' v < <(video_encode_args \"$fmt\" \"$extra\")\n        args+=(\"${v[@]}\")\n    fi\n\n    # ---- audio + subtitles -------------------------------------------------\n    while IFS= read -r line; do\n        f=(); IFS='|' read -ra kvs <<< \"$line\"\n        for kv in \"${kvs[@]}\"; do [[ $kv == ?*=* ]] && f[${kv%%=*}]=${kv#*=}; done\n        local idx=${f[index]:-} codec=${f[codec_name]:-unknown} lang=${f[tag:language]:-und}\n\n        case ${f[codec_type]:-} in\n        audio)\n            args+=(-map \"0:$idx\")\n            if [[ \" $COPY_AUDIO \" == *\" $codec \"* ]]; then\n                args+=(\"-c:a:$a\" copy); info \"audio #$a ($lang): $codec -> copy\"\n            elif is_lossless_audio \"$codec\" \"${f[profile]:-}\"; then\n                args+=(\"-c:a:$a\" flac); info \"audio #$a ($lang): $codec -> flac (lossless)\"\n            else\n                local ch=${f[channels]:-2}\n                args+=(\"-c:a:$a\" aac \"-b:a:$a\" \"$(( ch * AAC_KBPS_PER_CHANNEL ))k\")\n                info \"audio #$a ($lang): $codec -> aac $(( ch * AAC_KBPS_PER_CHANNEL ))k\"\n            fi\n            (( a++ ))\n            ;;\n        subtitle)\n            (( sub_n++ ))\n            case $codec in\n            subrip|srt|ass|ssa|webvtt|mov_text|text)\n                args+=(-map \"0:$idx\" \"-c:s:$s\" mov_text)\n                info \"subs  #$s ($lang): $codec -> mov_text\"\n                (( s++ ))\n                ;;\n            hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub)\n                local ext=mks muxer=matroska forced=\"\" name\n                [[ $codec == hdmv_pgs_subtitle ]] && { ext=sup; muxer=sup; }\n                [[ ${f[disposition:forced]:-0} == 1 ]] && forced=\".forced\"\n                name=\"$base.$lang$forced.$ext\"\n                [[ -n ${used_names[$name]:-} ]] && name=\"$base.$lang$forced.$sub_n.$ext\"\n                used_names[$name]=1\n                sidecars+=(\"$name\")\n                sidecar_args+=(-map \"0:$idx\" -c copy -map_chapters -1 -f \"$muxer\" \"$name\")\n                info \"subs   ($lang): $codec -> sidecar ${name##*/}\"\n                ;;\n            *)\n                warn \"subtitle track $idx ($codec) can't be stored in MP4 - dropped\"\n                ;;\n            esac\n            ;;\n        esac\n    done <<< \"$probe\"\n\n    args+=(-map_metadata 0 -map_chapters 0 -max_muxing_queue_size 4096\n           -movflags +faststart -f mp4 \"$tmp\")\n    args+=(\"${sidecar_args[@]}\")\n\n    if (( DRY_RUN )); then\n        printf '  [dry-run] ffmpeg'; printf ' %q' \"${args[@]}\"; printf '\\n'\n        return 0\n    fi\n\n    # ---- run -------------------------------------------------------------------\n    CURRENT_TMP=(\"$tmp\" \"${sidecars[@]}\")\n    if ! ffmpeg \"${args[@]}\"; then\n        rm -f -- \"${CURRENT_TMP[@]}\"; CURRENT_TMP=()\n        return 1\n    fi\n\n    # Sanity check: output must be readable and roughly as long as the source.\n    local din dout\n    din=$(probe_duration \"$src\"); dout=$(probe_duration \"$tmp\")\n    if [[ -z $dout ]]; then\n        warn \"output is unreadable\"; rm -f -- \"${CURRENT_TMP[@]}\"; CURRENT_TMP=(); return 1\n    fi\n    # (small differences are normal - e.g. a subtitle track ending after the video)\n    if [[ -n $din ]] && awk -v i=\"$din\" -v o=\"$dout\" 'BEGIN{exit !(o < i*0.97 - 5)}'; then\n        warn \"output is shorter than the source (${dout%.*}s vs ${din%.*}s) - check it\"\n        SHORT+=(\"$out\")\n    fi\n\n    mv -f -- \"$tmp\" \"$out\"\n    CURRENT_TMP=()\n    return 0\n}\n\n# ----------------------------------------------------------------------------\nmain() {\n    local dir=\"\"\n    while (( $# )); do\n        case $1 in\n            -c|--codec)      CODEC=${2:-}; shift 2 ;;\n            -q|--quality)    QUALITY=${2:-}; shift 2 ;;\n            -d|--device)     DEVICE=${2:-}; shift 2 ;;\n            --copy-video)    COPY_VIDEO=1; shift ;;\n            --no-deinterlace) DEINTERLACE=0; shift ;;\n            -n|--dry-run)    DRY_RUN=1; shift ;;\n            -h|--help)       usage; exit 0 ;;\n            --)              shift; dir=${1:-}; break ;;\n            -*)              die \"unknown option: $1 (see --help)\" ;;\n            *)               [[ -z $dir ]] || die \"only one directory, please\"; dir=$1; shift ;;\n        esac\n    done\n    dir=${dir:-.}\n    [[ -d $dir ]] || die \"not a directory: $dir\"\n    [[ -n ${ENCODER[$CODEC]:-} ]] || die \"codec must be hevc, av1 or h264\"\n    QUALITY=${QUALITY:-${DEFAULT_QUALITY[$CODEC]}}\n    [[ $QUALITY =~ ^[0-9]+$ ]] || die \"quality must be a number\"\n    DEVICE=${DEVICE:-$(detect_device)}\n\n    (( DRY_RUN )) || preflight\n\n    trap 'echo; rm -f -- \"${CURRENT_TMP[@]}\"; echo \"Interrupted - partial output removed.\"; exit 130' INT TERM\n\n    local -a files=()\n    mapfile -d '' files < <(find \"$dir\" -type f -iname '*.mkv' -print0 | sort -z)\n    (( ${#files[@]} )) || { echo \"No .mkv files found under $dir\"; exit 0; }\n\n    echo \"Device: $DEVICE   Encoder: ${ENCODER[$CODEC]}   QP: $QUALITY   Files: ${#files[@]}\"\n    local -a failed=(); SHORT=()\n    local done_n=0 skip_n=0 i=0 src out start\n\n    for src in \"${files[@]}\"; do\n        (( i++ ))\n        out=\"${src%.*}.mp4\"\n        if [[ -s $out ]] && [[ -n $(probe_duration \"$out\") ]]; then\n            printf '[%d/%d] skip (already converted): %s\\n' \"$i\" \"${#files[@]}\" \"$src\"\n            (( skip_n++ )); continue\n        fi\n        printf '\\n[%d/%d] %s\\n' \"$i\" \"${#files[@]}\" \"$src\"\n        start=$SECONDS\n        if convert_one \"$src\" \"$out\"; then\n            (( DRY_RUN )) || info \"done in $(( SECONDS - start ))s -> ${out##*/}\"\n            (( done_n++ ))\n        else\n            printf '  \\e[31mFAILED\\e[0m\\n'\n            failed+=(\"$src\")\n        fi\n    done\n\n    echo\n    echo \"$( (( DRY_RUN )) && echo \"Would convert\" || echo \"Converted\"): $done_n   Skipped: $skip_n   Failed: ${#failed[@]}\"\n    (( ${#SHORT[@]} )) && printf 'Check these (shorter than source): %s\\n' \"${SHORT[@]}\"\n    (( ${#failed[@]} )) && { printf 'Failed: %s\\n' \"${failed[@]}\"; exit 1; }\n    exit 0\n}\n\nif [[ ${BASH_SOURCE[0]} == \"$0\" ]]; then\n    main \"$@\"\nfi\n```\n\n## 3. Running it\n\n```\n./mkv2mp4.sh --dry-run ~/Videos          # preview: shows exactly what it would do to each file\n./mkv2mp4.sh ~/Videos                    # convert (HEVC, 10-bit kept for 10-bit/HDR sources)\n./mkv2mp4.sh --codec av1 ~/Videos        # AV1 instead (RDNA4 encodes it well)\n./mkv2mp4.sh --quality 22 ~/Videos       # higher quality / bigger files (default 24)\n./mkv2mp4.sh --copy-video ~/Videos       # don't re-encode video that's already H.264/HEVC/AV1\n```\n\nTo stop a run, press Ctrl+C. The script deletes the half-finished file, so the next run picks up from that file.\n\n## What happens to each track\n\n| Source | Result in the MP4 |\n|---|---|\n| Video | Re-encoded on the GPU at a fixed quality (QP). Decoding also runs on the GPU when it can, and falls back to the CPU automatically when it can't (e.g. Xvid or 10-bit H.264). Interlaced DVD and 1080i sources are deinterlaced on the GPU. |\n| AAC, AC3, E-AC3 (incl. Atmos), MP3, Opus, FLAC, ALAC, DTS / DTS-HD | Copied with no quality loss |\n| TrueHD, DTS-HD MA (only if you remove `dts` from the copy list), PCM | Converted to **FLAC**. This is lossless: the full 7.1/5.1 audio is kept bit-for-bit, but **Atmos/DTS:X object data is lost**. |\n| Vorbis, MP2, other lossy codecs | AAC at 96 kbps per channel |\n| SRT / ASS / WebVTT subs | Converted to MP4 text subs (`mov_text`) with language and forced flags kept. **ASS styling and fonts are lost.** |\n| PGS (Blu-ray) / VobSub (DVD) subs | MP4 can't hold picture-based subs, so they're saved next to the MP4 as `Movie.eng.sup` / `Movie.spa.mks`. mpv and VLC load them automatically. How well Jellyfin and Plex handle these sidecar formats varies. |\n| Chapters, title, track languages | Kept |\n\n## Good to know\n\n- **How skipping works:** a file counts as done when `Name.mp4` exists and ffprobe can read it. The script writes to `Name.mp4.partial` and only renames it when ffmpeg finishes cleanly. After that it also checks that the file opens and is about as long as the source. A file that fails is listed at the end, and the script moves on to the next one.\n- **Your iGPU:** the 9850X3D has integrated graphics. If it's enabled in the BIOS, `renderD128` might be the iGPU and not the 9070 XT. The script picks the AMD GPU with the most VRAM and prints which device it chose. You can force a device with `--device /dev/dri/renderD129`.\n- **Quality:** QP 24 for HEVC is a sensible default for 1080p film content. Lower numbers mean better quality and bigger files; try 20\u201322 if you're picky or 26\u201328 for smaller files. AV1 uses a 0\u2013255 scale. 110 is a starting point I haven't tuned on real hardware, so encode one test clip and check it by eye before doing a whole library. For HDR stick with HEVC: the HDR10 metadata gets carried over.\n- **Dolby Vision:** profile 5 files (common on streaming rips) can't be re-encoded without broken green/purple colours, so the script copies their video unchanged and tells you. On other DV profiles the DV layer is dropped and the HDR10 base is kept.\n- **Consider `--copy-video`:** if most of your MKVs are already H.264 or HEVC, re-encoding just costs quality for a smaller file. `--copy-video` only changes the container, which is lossless and takes seconds per file.\n- **Your originals are never touched.** Delete the MKVs yourself once you're happy with the MP4s.\n- **Anime with styled subs:** MP4 can't hold ASS styling, so keep those as MKV.\n\n**What I tested:** I ran the script in a Linux sandbox with no AMD GPU. For the test runs I swapped in a CPU encoder; the file finding, track handling, skipping, re-runs and Ctrl+C cleanup were the script's own code. The test files covered 7 audio formats, SRT/ASS/PGS/VobSub subs, cover art, fonts, chapters, 10-bit video, interlaced MPEG-2, odd filenames (spaces, `$`, `'`, `&`, `[ ]`) and a corrupt file.\n\nI could not run the GPU encode itself, because the sandbox has no AMD GPU. I wrote that part from ffmpeg's standard VA-API setup and checked the option names against ffmpeg. So run `--dry-run` first, then convert one small folder before pointing it at your whole library. If the GPU test encode at startup fails, send me the error it prints.\n"}], "grading": {"expectations": [{"text": "Script passes bash -n and shellcheck with no errors or warnings", "passed": true, "evidence": "bash -n ok; shellcheck 0.11 clean at style level (no findings)."}, {"text": "Uses a VAAPI hardware encoder (hevc_vaapi, h264_vaapi or av1_vaapi)", "passed": true, "evidence": "ENCODER map hevc_vaapi/h264_vaapi/av1_vaapi; preflight test encode."}, {"text": "Picks the RX 9070 XT render node by detection or override instead of hard-coding renderD128", "passed": true, "evidence": "detect_device(): AMD renderD* with most VRAM; --device override; falls back to renderD128."}, {"text": "Recursive file iteration is safe for any filename (null-delimited find or glob arrays, quoted)", "passed": true, "evidence": "mapfile -d '' from find -print0 | sort -z; expansions quoted."}, {"text": "ffmpeg cannot swallow the loop's stdin (-nostdin or </dev/null)", "passed": true, "evidence": "ffmpeg invoked with -nostdin; loop iterates an array."}, {"text": "Paths passed to ffmpeg can't be misread as options or protocols (absolute, ./ or file: prefix)", "passed": false, "evidence": "Passes \"$src\"/\"$tmp\" raw to ffmpeg. Relies on find's dir prefix; a relative dir argument containing ':' (e.g. 'Season:1') fails with 'Protocol not found' (reproduced with ffmpeg 6.1). A dir named '-x' also breaks find."}, {"text": "Handles MP4 subtitle limits: text subs to mov_text, image subs (PGS/VobSub) dropped or handled without failing the file", "passed": true, "evidence": "Text subs -> mov_text; PGS/VobSub extracted to .sup/.mks sidecar files next to the MP4 (keeps them, beyond dropping)."}, {"text": "Writes to a temp file and renames on success, so an interrupted encode isn't treated as done", "passed": true, "evidence": "Writes $out.partial with -f mp4, checks readability/duration, then mv -f; INT/TERM trap removes partials."}, {"text": "Skips files whose output already exists (idempotent rerun)", "passed": true, "evidence": "Skips when .mp4 exists, is non-empty and ffprobe reads a duration."}, {"text": "One file failing doesn't abort the batch; ends with a summary and non-zero exit if anything failed", "passed": true, "evidence": "Failed files collected; summary line; exit 1 if any failed (no set -e)."}, {"text": "Run commands in the reply are valid fish syntax (no heredocs, <(), [[ ]], $?, for/do/done, bare VAR=)", "passed": true, "evidence": "Setup and run blocks are plain commands with # comments: valid fish."}, {"text": "Reply is code-only: no intro or walkthrough, at most 3 short notes plus an optional Verified line", "passed": false, "evidence": "Long reply: intro paragraph, 3 section headers, a 7-row table, 7 'Good to know' bullets and a 2-paragraph testing note (~400 lines incl. script)."}], "summary": {"passed": 10, "failed": 2, "total": 12, "pass_rate": 0.83}}}], "previous_feedback": {}, "previous_outputs": {}, "benchmark": {"metadata": {"skill_name": "linux-scripting", "skill_path": "/home/claude/linux-scripting", "executor_model": "claude-opus-5-5", "analyzer_model": "claude-opus-5-5", "timestamp": "2026-10-06T12:54:47Z", "evals_run": [1], "runs_per_configuration": 1}, "runs": [{"eval_id": 1, "configuration": "with_skill", "run_number": 1, "result": {"pass_rate": 1.0, "passed": 12, "failed": 0, "total": 12, "time_seconds": 1090.6, "tokens": 211686, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Script passes bash -n and shellcheck with no errors or warnings", "passed": true, "evidence": "bash -n ok; shellcheck 0.11 clean at style level (no findings)."}, {"text": "Uses a VAAPI hardware encoder (hevc_vaapi, h264_vaapi or av1_vaapi)", "passed": true, "evidence": "-c:v \"${CODEC}_vaapi\" with hevc default (line 171); test_encoder probes it before any file."}, {"text": "Picks the RX 9070 XT render node by detection or override instead of hard-coding renderD128", "passed": true, "evidence": "find_render_node(): AMD (0x1002) card with most mem_info_vram_total, then renderD* on the same PCI device; VAAPI_DEVICE env override."}, {"text": "Recursive file iteration is safe for any filename (null-delimited find or glob arrays, quoted)", "passed": true, "evidence": "mapfile -d '' from find -print0 | sort -z; all expansions quoted; leading-dash roots prefixed with ./."}, {"text": "ffmpeg cannot swallow the loop's stdin (-nostdin or </dev/null)", "passed": true, "evidence": "ffmpeg and test encode both use -nostdin; loop iterates an array, not stdin."}, {"text": "Paths passed to ffmpeg can't be misread as options or protocols (absolute, ./ or file: prefix)", "passed": true, "evidence": "All ffmpeg/ffprobe paths use the file: prefix (lines 120, 182-183, 205); bare names get ./."}, {"text": "Handles MP4 subtitle limits: text subs to mov_text, image subs (PGS/VobSub) dropped or handled without failing the file", "passed": true, "evidence": "TEXT_SUBS -> mov_text; PGS/VobSub/DVB are left out and listed per file in a log note; the file still converts."}, {"text": "Writes to a temp file and renames on success, so an interrupted encode isn't treated as done", "passed": true, "evidence": "Writes to .<stem>.mp4.part in the same dir, validates duration >= 90% of source, then mv -f; EXIT/INT/TERM traps delete the partial."}, {"text": "Skips files whose output already exists (idempotent rerun)", "passed": true, "evidence": "[[ -s $out ]] -> skip (return 2) before probing."}, {"text": "One file failing doesn't abort the batch; ends with a summary and non-zero exit if anything failed", "passed": true, "evidence": "convert_one in || context, per-file rc counted ok/skip/fail; summary(); exit 1 if n_fail>0."}, {"text": "Run commands in the reply are valid fish syntax (no heredocs, <(), [[ ]], $?, for/do/done, bare VAR=)", "passed": true, "evidence": "Run block: pacman install, install -Dm755, fish_add_path, mkv2mp4 -n / mkv2mp4: all valid fish."}, {"text": "Reply is code-only: no intro or walkthrough, at most 3 short notes plus an optional Verified line", "passed": true, "evidence": "Outside code: 'Run:', 3 bullets, 1 Verified line. No intro or walkthrough. (Bullets are wordier than 'terse'.)"}], "notes": []}, {"eval_id": 1, "configuration": "without_skill", "run_number": 1, "result": {"pass_rate": 0.83, "passed": 10, "failed": 2, "total": 12, "time_seconds": 822.6, "tokens": 166424, "tool_calls": 0, "errors": 0}, "expectations": [{"text": "Script passes bash -n and shellcheck with no errors or warnings", "passed": true, "evidence": "bash -n ok; shellcheck 0.11 clean at style level (no findings)."}, {"text": "Uses a VAAPI hardware encoder (hevc_vaapi, h264_vaapi or av1_vaapi)", "passed": true, "evidence": "ENCODER map hevc_vaapi/h264_vaapi/av1_vaapi; preflight test encode."}, {"text": "Picks the RX 9070 XT render node by detection or override instead of hard-coding renderD128", "passed": true, "evidence": "detect_device(): AMD renderD* with most VRAM; --device override; falls back to renderD128."}, {"text": "Recursive file iteration is safe for any filename (null-delimited find or glob arrays, quoted)", "passed": true, "evidence": "mapfile -d '' from find -print0 | sort -z; expansions quoted."}, {"text": "ffmpeg cannot swallow the loop's stdin (-nostdin or </dev/null)", "passed": true, "evidence": "ffmpeg invoked with -nostdin; loop iterates an array."}, {"text": "Paths passed to ffmpeg can't be misread as options or protocols (absolute, ./ or file: prefix)", "passed": false, "evidence": "Passes \"$src\"/\"$tmp\" raw to ffmpeg. Relies on find's dir prefix; a relative dir argument containing ':' (e.g. 'Season:1') fails with 'Protocol not found' (reproduced with ffmpeg 6.1). A dir named '-x' also breaks find."}, {"text": "Handles MP4 subtitle limits: text subs to mov_text, image subs (PGS/VobSub) dropped or handled without failing the file", "passed": true, "evidence": "Text subs -> mov_text; PGS/VobSub extracted to .sup/.mks sidecar files next to the MP4 (keeps them, beyond dropping)."}, {"text": "Writes to a temp file and renames on success, so an interrupted encode isn't treated as done", "passed": true, "evidence": "Writes $out.partial with -f mp4, checks readability/duration, then mv -f; INT/TERM trap removes partials."}, {"text": "Skips files whose output already exists (idempotent rerun)", "passed": true, "evidence": "Skips when .mp4 exists, is non-empty and ffprobe reads a duration."}, {"text": "One file failing doesn't abort the batch; ends with a summary and non-zero exit if anything failed", "passed": true, "evidence": "Failed files collected; summary line; exit 1 if any failed (no set -e)."}, {"text": "Run commands in the reply are valid fish syntax (no heredocs, <(), [[ ]], $?, for/do/done, bare VAR=)", "passed": true, "evidence": "Setup and run blocks are plain commands with # comments: valid fish."}, {"text": "Reply is code-only: no intro or walkthrough, at most 3 short notes plus an optional Verified line", "passed": false, "evidence": "Long reply: intro paragraph, 3 section headers, a 7-row table, 7 'Good to know' bullets and a 2-paragraph testing note (~400 lines incl. script)."}], "notes": []}], "run_summary": {"with_skill": {"pass_rate": {"mean": 1.0, "stddev": 0.0, "min": 1.0, "max": 1.0}, "time_seconds": {"mean": 1090.6, "stddev": 0.0, "min": 1090.6, "max": 1090.6}, "tokens": {"mean": 211686.0, "stddev": 0.0, "min": 211686, "max": 211686}}, "without_skill": {"pass_rate": {"mean": 0.83, "stddev": 0.0, "min": 0.83, "max": 0.83}, "time_seconds": {"mean": 822.6, "stddev": 0.0, "min": 822.6, "max": 822.6}, "tokens": {"mean": 166424.0, "stddev": 0.0, "min": 166424, "max": 166424}}, "delta": {"pass_rate": "+0.17", "time_seconds": "+268.0", "tokens": "+45262"}}, "notes": ["10 of 12 assertions pass in both configs, so they don't discriminate. The baseline already had the user's context (CachyOS, 9850X3D iGPU), so it also detected the dGPU render node and used fish-safe commands.", "Real discriminators: (1) path safety: the baseline passes raw paths to ffmpeg, so a relative folder like 'Season:1' fails with 'Protocol not found' (reproduced); the skill run uses the file: prefix. (2) Reply format: the skill run is code-only, while the baseline is ~400 lines with headers, a table and 7 tips.", "Not covered by assertions, but the baseline did better on fidelity: lossless TrueHD/PCM become FLAC (the skill run makes lossy AAC), picture subs are kept as .sup/.mks sidecars (the skill run drops them), and it handles Dolby Vision profile 5 and deinterlacing.", "The skill run cost +268s and +45k tokens (+33%) because it built a 29-check stubbed regression suite (interrupts, rerun, dry run, GPU-decode fallback).", "Single run per config, so there's no variance data."]}};
+
+    // ---- State ----
+    let feedbackMap = {};  // run_id -> feedback text
+    let currentIndex = 0;
+    let visitedRuns = new Set();
+
+    // ---- Init ----
+    async function init() {
+      // Load saved feedback from server — but only if this isn't a fresh
+      // iteration (indicated by previous_feedback being present). When
+      // previous feedback exists, the feedback.json on disk is stale from
+      // the prior iteration and should not pre-fill the textareas.
+      const hasPrevious = Object.keys(EMBEDDED_DATA.previous_feedback || {}).length > 0
+        || Object.keys(EMBEDDED_DATA.previous_outputs || {}).length > 0;
+      if (!hasPrevious) {
+        try {
+          const resp = await fetch("/api/feedback");
+          const data = await resp.json();
+          if (data.reviews) {
+            for (const r of data.reviews) feedbackMap[r.run_id] = r.feedback;
+          }
+        } catch { /* first run, no feedback yet */ }
+      }
+
+      document.getElementById("skill-name").textContent = EMBEDDED_DATA.skill_name;
+      showRun(0);
+
+      // Wire up feedback auto-save
+      const textarea = document.getElementById("feedback");
+      let saveTimeout = null;
+      textarea.addEventListener("input", () => {
+        clearTimeout(saveTimeout);
+        document.getElementById("feedback-status").textContent = "";
+        saveTimeout = setTimeout(() => saveCurrentFeedback(), 800);
+      });
+    }
+
+    // ---- Navigation ----
+    function navigate(delta) {
+      const newIndex = currentIndex + delta;
+      if (newIndex >= 0 && newIndex < EMBEDDED_DATA.runs.length) {
+        saveCurrentFeedback();
+        showRun(newIndex);
+      }
+    }
+
+    function updateNavButtons() {
+      document.getElementById("prev-btn").disabled = currentIndex === 0;
+      document.getElementById("next-btn").disabled =
+        currentIndex === EMBEDDED_DATA.runs.length - 1;
+    }
+
+    // ---- Show a run ----
+    function showRun(index) {
+      currentIndex = index;
+      const run = EMBEDDED_DATA.runs[index];
+
+      // Progress
+      document.getElementById("progress").textContent =
+        `${index + 1} of ${EMBEDDED_DATA.runs.length}`;
+
+      // Prompt
+      document.getElementById("prompt-text").textContent = run.prompt;
+
+      // Config badge
+      const badge = document.getElementById("config-badge");
+      const configMatch = run.id.match(/(with_skill|without_skill|new_skill|old_skill)/);
+      if (configMatch) {
+        const config = configMatch[1];
+        const isBaseline = config === "without_skill" || config === "old_skill";
+        badge.textContent = config.replace(/_/g, " ");
+        badge.className = "config-badge " + (isBaseline ? "config-baseline" : "config-primary");
+        badge.style.display = "inline-block";
+      } else {
+        badge.style.display = "none";
+      }
+
+      // Outputs
+      renderOutputs(run);
+
+      // Previous outputs
+      renderPrevOutputs(run);
+
+      // Grades
+      renderGrades(run);
+
+      // Previous feedback
+      const prevFb = (EMBEDDED_DATA.previous_feedback || {})[run.id];
+      const prevEl = document.getElementById("prev-feedback");
+      if (prevFb) {
+        document.getElementById("prev-feedback-text").textContent = prevFb;
+        prevEl.style.display = "block";
+      } else {
+        prevEl.style.display = "none";
+      }
+
+      // Feedback
+      document.getElementById("feedback").value = feedbackMap[run.id] || "";
+      document.getElementById("feedback-status").textContent = "";
+
+      updateNavButtons();
+
+      // Track visited runs and promote done button when all visited
+      visitedRuns.add(index);
+      const doneBtn = document.getElementById("done-btn");
+      if (visitedRuns.size >= EMBEDDED_DATA.runs.length) {
+        doneBtn.classList.add("ready");
+      }
+
+      // Scroll main content to top
+      document.querySelector(".main").scrollTop = 0;
+    }
+
+    // ---- Render outputs ----
+    function renderOutputs(run) {
+      const container = document.getElementById("outputs-body");
+      container.innerHTML = "";
+
+      const outputs = run.outputs || [];
+      if (outputs.length === 0) {
+        container.innerHTML = '<div class="empty-state">No output files</div>';
+        return;
+      }
+
+      for (const file of outputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        // Always show file header with download link
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const content = document.createElement("div");
+        content.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          content.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          content.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          content.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(content, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          content.appendChild(a);
+        } else if (file.type === "error") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          pre.style.color = "var(--red)";
+          content.appendChild(pre);
+        }
+
+        fileDiv.appendChild(content);
+        container.appendChild(fileDiv);
+      }
+    }
+
+    // ---- XLSX rendering via SheetJS ----
+    function renderXlsx(container, b64Data) {
+      try {
+        const raw = Uint8Array.from(atob(b64Data), c => c.charCodeAt(0));
+        const wb = XLSX.read(raw, { type: "array" });
+
+        for (let i = 0; i < wb.SheetNames.length; i++) {
+          const sheetName = wb.SheetNames[i];
+          const ws = wb.Sheets[sheetName];
+
+          if (wb.SheetNames.length > 1) {
+            const sheetLabel = document.createElement("div");
+            sheetLabel.style.cssText =
+              "font-weight:600; font-size:0.8rem; color:#b0aea5; margin-top:0.5rem; margin-bottom:0.25rem;";
+            sheetLabel.textContent = "Sheet: " + sheetName;
+            container.appendChild(sheetLabel);
+          }
+
+          const htmlStr = XLSX.utils.sheet_to_html(ws, { editable: false });
+          const wrapper = document.createElement("div");
+          wrapper.innerHTML = htmlStr;
+          container.appendChild(wrapper);
+        }
+      } catch (err) {
+        container.textContent = "Error rendering spreadsheet: " + err.message;
+      }
+    }
+
+    // ---- Grades ----
+    function renderGrades(run) {
+      const section = document.getElementById("grades-section");
+      const content = document.getElementById("grades-content");
+
+      if (!run.grading) {
+        section.style.display = "none";
+        return;
+      }
+
+      const grading = run.grading;
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("grades-arrow").classList.remove("open");
+
+      const summary = grading.summary || {};
+      const expectations = grading.expectations || [];
+
+      let html = '<div style="padding: 1rem;">';
+
+      // Summary line
+      const passRate = summary.pass_rate != null
+        ? Math.round(summary.pass_rate * 100) + "%"
+        : "?";
+      const badgeClass = summary.pass_rate >= 0.8 ? "grade-pass" : summary.pass_rate >= 0.5 ? "" : "grade-fail";
+      html += '<div class="grades-summary">';
+      html += '<span class="grade-badge ' + badgeClass + '">' + passRate + '</span>';
+      html += '<span>' + (summary.passed || 0) + ' passed, ' + (summary.failed || 0) + ' failed of ' + (summary.total || 0) + '</span>';
+      html += '</div>';
+
+      // Assertions list
+      html += '<ul class="assertion-list">';
+      for (const exp of expectations) {
+        const statusClass = exp.passed ? "pass" : "fail";
+        const statusIcon = exp.passed ? "\u2713" : "\u2717";
+        html += '<li class="assertion-item">';
+        html += '<span class="assertion-status ' + statusClass + '">' + statusIcon + '</span>';
+        html += '<span>' + escapeHtml(exp.text) + '</span>';
+        if (exp.evidence) {
+          html += '<div class="assertion-evidence">' + escapeHtml(exp.evidence) + '</div>';
+        }
+        html += '</li>';
+      }
+      html += '</ul>';
+
+      html += '</div>';
+      content.innerHTML = html;
+    }
+
+    function toggleGrades() {
+      const content = document.getElementById("grades-content");
+      const arrow = document.getElementById("grades-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Previous outputs (collapsible) ----
+    function renderPrevOutputs(run) {
+      const section = document.getElementById("prev-outputs-section");
+      const content = document.getElementById("prev-outputs-content");
+      const prevOutputs = (EMBEDDED_DATA.previous_outputs || {})[run.id];
+
+      if (!prevOutputs || prevOutputs.length === 0) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+      // Reset to collapsed
+      content.classList.remove("open");
+      document.getElementById("prev-outputs-arrow").classList.remove("open");
+
+      // Render the files into the content area
+      content.innerHTML = "";
+      const wrapper = document.createElement("div");
+      wrapper.style.padding = "1rem";
+
+      for (const file of prevOutputs) {
+        const fileDiv = document.createElement("div");
+        fileDiv.className = "output-file";
+
+        const header = document.createElement("div");
+        header.className = "output-file-header";
+        const nameSpan = document.createElement("span");
+        nameSpan.textContent = file.name;
+        header.appendChild(nameSpan);
+        const dlBtn = document.createElement("a");
+        dlBtn.className = "dl-btn";
+        dlBtn.textContent = "Download";
+        dlBtn.download = file.name;
+        dlBtn.href = getDownloadUri(file);
+        header.appendChild(dlBtn);
+        fileDiv.appendChild(header);
+
+        const fc = document.createElement("div");
+        fc.className = "output-file-content";
+
+        if (file.type === "text") {
+          const pre = document.createElement("pre");
+          pre.textContent = file.content;
+          fc.appendChild(pre);
+        } else if (file.type === "image") {
+          const img = document.createElement("img");
+          img.src = file.data_uri;
+          img.alt = file.name;
+          fc.appendChild(img);
+        } else if (file.type === "pdf") {
+          const iframe = document.createElement("iframe");
+          iframe.src = file.data_uri;
+          fc.appendChild(iframe);
+        } else if (file.type === "xlsx") {
+          renderXlsx(fc, file.data_b64);
+        } else if (file.type === "binary") {
+          const a = document.createElement("a");
+          a.className = "download-link";
+          a.href = file.data_uri;
+          a.download = file.name;
+          a.textContent = "Download " + file.name;
+          fc.appendChild(a);
+        }
+
+        fileDiv.appendChild(fc);
+        wrapper.appendChild(fileDiv);
+      }
+
+      content.appendChild(wrapper);
+    }
+
+    function togglePrevOutputs() {
+      const content = document.getElementById("prev-outputs-content");
+      const arrow = document.getElementById("prev-outputs-arrow");
+      content.classList.toggle("open");
+      arrow.classList.toggle("open");
+    }
+
+    // ---- Feedback (saved to server -> feedback.json) ----
+    function saveCurrentFeedback() {
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // Build reviews array from map
+      const reviews = [];
+      for (const [run_id, feedback] of Object.entries(feedbackMap)) {
+        if (feedback.trim()) {
+          reviews.push({ run_id, feedback, timestamp: new Date().toISOString() });
+        }
+      }
+
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviews, status: "in_progress" }),
+      }).then(() => {
+        document.getElementById("feedback-status").textContent = "Saved";
+      }).catch(() => {
+        // Static mode or server unavailable — no-op on auto-save,
+        // feedback will be downloaded on final submit
+        document.getElementById("feedback-status").textContent = "Will download on submit";
+      });
+    }
+
+    // ---- Done ----
+    function showDoneDialog() {
+      // Save current textarea to feedbackMap (but don't POST yet)
+      const run = EMBEDDED_DATA.runs[currentIndex];
+      const text = document.getElementById("feedback").value;
+      if (text.trim() === "") {
+        delete feedbackMap[run.id];
+      } else {
+        feedbackMap[run.id] = text;
+      }
+
+      // POST once with status: complete — include ALL runs so the model
+      // can distinguish "no feedback" (looks good) from "not reviewed"
+      const reviews = [];
+      const ts = new Date().toISOString();
+      for (const r of EMBEDDED_DATA.runs) {
+        reviews.push({ run_id: r.id, feedback: feedbackMap[r.id] || "", timestamp: ts });
+      }
+      const payload = JSON.stringify({ reviews, status: "complete" }, null, 2);
+      fetch("/api/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      }).then(() => {
+        document.getElementById("done-overlay").classList.add("visible");
+      }).catch(() => {
+        // Server not available (static mode) — download as file
+        const blob = new Blob([payload], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "feedback.json";
+        a.click();
+        URL.revokeObjectURL(url);
+        document.getElementById("done-overlay").classList.add("visible");
+      });
+    }
+
+    function closeDoneDialog() {
+      // Reset status back to in_progress
+      saveCurrentFeedback();
+      document.getElementById("done-overlay").classList.remove("visible");
+    }
+
+    // ---- Toast ----
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      toast.textContent = message;
+      toast.classList.add("visible");
+      setTimeout(() => toast.classList.remove("visible"), 2000);
+    }
+
+    // ---- Keyboard nav ----
+    document.addEventListener("keydown", (e) => {
+      // Don't capture when typing in textarea
+      if (e.target.tagName === "TEXTAREA") return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault();
+        navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+        e.preventDefault();
+        navigate(1);
+      }
+    });
+
+    // ---- Util ----
+    function getDownloadUri(file) {
+      if (file.data_uri) return file.data_uri;
+      if (file.data_b64) return "data:application/octet-stream;base64," + file.data_b64;
+      if (file.type === "text") return "data:text/plain;charset=utf-8," + encodeURIComponent(file.content);
+      return "#";
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    // ---- View switching ----
+    function switchView(view) {
+      document.querySelectorAll(".view-tab").forEach(t => t.classList.remove("active"));
+      document.querySelectorAll(".view-panel").forEach(p => p.classList.remove("active"));
+      document.querySelector(`[onclick="switchView('${view}')"]`).classList.add("active");
+      document.getElementById("panel-" + view).classList.add("active");
+    }
+
+    // ---- Benchmark rendering ----
+    function renderBenchmark() {
+      const data = EMBEDDED_DATA.benchmark;
+      if (!data) return;
+
+      // Show the tabs
+      document.getElementById("view-tabs").style.display = "flex";
+
+      const container = document.getElementById("benchmark-content");
+      const summary = data.run_summary || {};
+      const metadata = data.metadata || {};
+      const notes = data.notes || [];
+
+      let html = "";
+
+      // Header
+      html += "<h2 style='font-family: Poppins, sans-serif; margin-bottom: 0.5rem;'>Benchmark Results</h2>";
+      html += "<p style='color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;'>";
+      if (metadata.skill_name) html += "<strong>" + escapeHtml(metadata.skill_name) + "</strong> &mdash; ";
+      if (metadata.timestamp) html += metadata.timestamp + " &mdash; ";
+      if (metadata.evals_run) html += "Evals: " + metadata.evals_run.join(", ") + " &mdash; ";
+      html += (metadata.runs_per_configuration || "?") + " runs per configuration";
+      html += "</p>";
+
+      // Summary table
+      html += '<table class="benchmark-table">';
+
+      function fmtStat(stat, pct) {
+        if (!stat) return "—";
+        const suffix = pct ? "%" : "";
+        const m = pct ? (stat.mean * 100).toFixed(0) : stat.mean.toFixed(1);
+        const s = pct ? (stat.stddev * 100).toFixed(0) : stat.stddev.toFixed(1);
+        return m + suffix + " ± " + s + suffix;
+      }
+
+      function deltaClass(val) {
+        if (!val) return "";
+        const n = parseFloat(val);
+        if (n > 0) return "benchmark-delta-positive";
+        if (n < 0) return "benchmark-delta-negative";
+        return "";
+      }
+
+      // Discover config names dynamically (everything except "delta")
+      const configs = Object.keys(summary).filter(k => k !== "delta");
+      const configA = configs[0] || "config_a";
+      const configB = configs[1] || "config_b";
+      const labelA = configA.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const labelB = configB.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      const a = summary[configA] || {};
+      const b = summary[configB] || {};
+      const delta = summary.delta || {};
+
+      html += "<thead><tr><th>Metric</th><th>" + escapeHtml(labelA) + "</th><th>" + escapeHtml(labelB) + "</th><th>Delta</th></tr></thead>";
+      html += "<tbody>";
+
+      html += "<tr><td><strong>Pass Rate</strong></td>";
+      html += "<td>" + fmtStat(a.pass_rate, true) + "</td>";
+      html += "<td>" + fmtStat(b.pass_rate, true) + "</td>";
+      html += '<td class="' + deltaClass(delta.pass_rate) + '">' + (delta.pass_rate || "—") + "</td></tr>";
+
+      // Time (only show row if data exists)
+      if (a.time_seconds || b.time_seconds) {
+        html += "<tr><td><strong>Time (s)</strong></td>";
+        html += "<td>" + fmtStat(a.time_seconds, false) + "</td>";
+        html += "<td>" + fmtStat(b.time_seconds, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.time_seconds) + '">' + (delta.time_seconds ? delta.time_seconds + "s" : "—") + "</td></tr>";
+      }
+
+      // Tokens (only show row if data exists)
+      if (a.tokens || b.tokens) {
+        html += "<tr><td><strong>Tokens</strong></td>";
+        html += "<td>" + fmtStat(a.tokens, false) + "</td>";
+        html += "<td>" + fmtStat(b.tokens, false) + "</td>";
+        html += '<td class="' + deltaClass(delta.tokens) + '">' + (delta.tokens || "—") + "</td></tr>";
+      }
+
+      html += "</tbody></table>";
+
+      // Per-eval breakdown (if runs data available)
+      const runs = data.runs || [];
+      if (runs.length > 0) {
+        const evalIds = [...new Set(runs.map(r => r.eval_id))].sort((a, b) => a - b);
+
+        html += "<h3 style='font-family: Poppins, sans-serif; margin-bottom: 0.75rem;'>Per-Eval Breakdown</h3>";
+
+        const hasTime = runs.some(r => r.result && r.result.time_seconds != null);
+        const hasErrors = runs.some(r => r.result && r.result.errors > 0);
+
+        for (const evalId of evalIds) {
+          const evalRuns = runs.filter(r => r.eval_id === evalId);
+          const evalName = evalRuns[0] && evalRuns[0].eval_name ? evalRuns[0].eval_name : "Eval " + evalId;
+
+          html += "<h4 style='font-family: Poppins, sans-serif; margin: 1rem 0 0.5rem; color: var(--text);'>" + escapeHtml(evalName) + "</h4>";
+          html += '<table class="benchmark-table">';
+          html += "<thead><tr><th>Config</th><th>Run</th><th>Pass Rate</th>";
+          if (hasTime) html += "<th>Time (s)</th>";
+          if (hasErrors) html += "<th>Crashes During Execution</th>";
+          html += "</tr></thead>";
+          html += "<tbody>";
+
+          // Group by config and render with average rows
+          const configGroups = [...new Set(evalRuns.map(r => r.configuration))];
+          for (let ci = 0; ci < configGroups.length; ci++) {
+            const config = configGroups[ci];
+            const configRuns = evalRuns.filter(r => r.configuration === config);
+            if (configRuns.length === 0) continue;
+
+            const rowClass = ci === 0 ? "benchmark-row-with" : "benchmark-row-without";
+            const configLabel = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+
+            for (const run of configRuns) {
+              const r = run.result || {};
+              const prClass = r.pass_rate >= 0.8 ? "benchmark-delta-positive" : r.pass_rate < 0.5 ? "benchmark-delta-negative" : "";
+              html += '<tr class="' + rowClass + '">';
+              html += "<td>" + configLabel + "</td>";
+              html += "<td>" + run.run_number + "</td>";
+              html += '<td class="' + prClass + '">' + ((r.pass_rate || 0) * 100).toFixed(0) + "% (" + (r.passed || 0) + "/" + (r.total || 0) + ")</td>";
+              if (hasTime) html += "<td>" + (r.time_seconds != null ? r.time_seconds.toFixed(1) : "—") + "</td>";
+              if (hasErrors) html += "<td>" + (r.errors || 0) + "</td>";
+              html += "</tr>";
+            }
+
+            // Average row
+            const rates = configRuns.map(r => (r.result || {}).pass_rate || 0);
+            const avgRate = rates.reduce((a, b) => a + b, 0) / rates.length;
+            const avgPrClass = avgRate >= 0.8 ? "benchmark-delta-positive" : avgRate < 0.5 ? "benchmark-delta-negative" : "";
+            html += '<tr class="benchmark-row-avg ' + rowClass + '">';
+            html += "<td>" + configLabel + "</td>";
+            html += "<td>Avg</td>";
+            html += '<td class="' + avgPrClass + '">' + (avgRate * 100).toFixed(0) + "%</td>";
+            if (hasTime) {
+              const times = configRuns.map(r => (r.result || {}).time_seconds).filter(t => t != null);
+              html += "<td>" + (times.length ? (times.reduce((a, b) => a + b, 0) / times.length).toFixed(1) : "—") + "</td>";
+            }
+            if (hasErrors) html += "<td></td>";
+            html += "</tr>";
+          }
+          html += "</tbody></table>";
+
+          // Per-assertion detail for this eval
+          const runsWithExpectations = {};
+          for (const config of configGroups) {
+            runsWithExpectations[config] = evalRuns.filter(r => r.configuration === config && r.expectations && r.expectations.length > 0);
+          }
+          const hasAnyExpectations = Object.values(runsWithExpectations).some(runs => runs.length > 0);
+          if (hasAnyExpectations) {
+            // Collect all unique assertion texts across all configs
+            const allAssertions = [];
+            const seen = new Set();
+            for (const config of configGroups) {
+              for (const run of runsWithExpectations[config]) {
+                for (const exp of (run.expectations || [])) {
+                  if (!seen.has(exp.text)) {
+                    seen.add(exp.text);
+                    allAssertions.push(exp.text);
+                  }
+                }
+              }
+            }
+
+            html += '<table class="benchmark-table" style="margin-top: 0.5rem;">';
+            html += "<thead><tr><th>Assertion</th>";
+            for (const config of configGroups) {
+              const label = config.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+              html += "<th>" + escapeHtml(label) + "</th>";
+            }
+            html += "</tr></thead><tbody>";
+
+            for (const assertionText of allAssertions) {
+              html += "<tr><td>" + escapeHtml(assertionText) + "</td>";
+
+              for (const config of configGroups) {
+                html += "<td>";
+                for (const run of runsWithExpectations[config]) {
+                  const exp = (run.expectations || []).find(e => e.text === assertionText);
+                  if (exp) {
+                    const cls = exp.passed ? "benchmark-delta-positive" : "benchmark-delta-negative";
+                    const icon = exp.passed ? "\u2713" : "\u2717";
+                    html += '<span class="' + cls + '" title="Run ' + run.run_number + ': ' + escapeHtml(exp.evidence || "") + '">' + icon + "</span> ";
+                  } else {
+                    html += "— ";
+                  }
+                }
+                html += "</td>";
+              }
+              html += "</tr>";
+            }
+            html += "</tbody></table>";
+          }
+        }
+      }
+
+      // Notes
+      if (notes.length > 0) {
+        html += '<div class="benchmark-notes">';
+        html += "<h3>Analysis Notes</h3>";
+        html += "<ul>";
+        for (const note of notes) {
+          html += "<li>" + escapeHtml(note) + "</li>";
+        }
+        html += "</ul></div>";
+      }
+
+      container.innerHTML = html;
+    }
+
+    // ---- Start ----
+    init();
+    renderBenchmark();
+  </script>
+</body>
+</html>
