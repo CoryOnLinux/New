@@ -14,6 +14,7 @@ copy -> check the audio frames are byte-identical -> undo record -> atomic renam
 import argparse
 import base64
 import concurrent.futures as cf
+import contextlib
 import dataclasses
 import datetime as dt
 import fcntl
@@ -24,6 +25,7 @@ import re
 import secrets
 import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -42,13 +44,15 @@ except ImportError:
     np = None
 
 # Spectral analysis: one excerpt per file. Thresholds come from calibration on genuine 24-bit
-# recordings (cliff 9-21 dB), the same recordings upsampled with soxr (63-108 dB) and MP3
-# 128k/192k sources (24-57 dB, edge 16-18.8 kHz). MP3 320k, V0 and AAC 256k are not detectable.
+# recordings (cliff 4-21 dB; downsampled to 48 kHz: 27-30 dB at 23.1 kHz), the same recordings
+# upsampled with soxr (56-108 dB) or ffmpeg's default resampler (23-73 dB, its images blur the edge)
+# and MP3 sources (10-57 dB, edge 16-20 kHz). MP3 V0 and AAC 256k are not detectable.
 EXCERPT_S = 60
 BAND_HZ = 100
-UPSAMPLE_CLIFF_DB = 40.0
+UPSAMPLE_CLIFF_DB = 30.0      # hi-res files
+UPSAMPLE_CLIFF_DB_48K = 40.0  # 48 kHz files: genuine ones can show ~30 dB, a little above 22 kHz
 LOSSY_CLIFF_DB = 25.0
-LOSSY_MAX_EDGE_HZ = 20500
+LOSSY_MAX_EDGE_HZ = 20600  # edges are band centres: a 20.5 kHz brick wall reads 20550
 
 COVER_MIN_PX = 500
 COVER_MAX_PX = 3000
@@ -76,12 +80,14 @@ DISC_DIR_RE = re.compile(r'^(disc|disk|cd)\s*\d+\b', re.I)
 FILE_NUM_RE = re.compile(r'^(\d{1,3})\s*[-.]\s')
 YEAR_DIR_RE = re.compile(r'\((\d{4})\)\s*$')
 TMP_PREFIX = '.flacmeta-'
+MAX_NUMBER = 999  # track/disc numbers above this are reported as malformed, not used for gap checks
 
 LEVELS = ('ERROR', 'WARN', 'INFO')
 BLOCK_NAMES = {0: 'STREAMINFO', 1: 'PADDING', 2: 'APPLICATION', 3: 'SEEKTABLE', 4: 'VORBIS_COMMENT',
                5: 'CUESHEET', 6: 'PICTURE'}
 STATE_DIR = os.path.join(os.environ.get('XDG_STATE_HOME') or os.path.expanduser('~/.local/state'), 'flacmeta')
 
+HOLDING_LOCK = False  # this process holds the write lock
 STOP = threading.Event()  # set on Ctrl+C/SIGTERM: workers finish their step, clean up, and don't replace
 
 
@@ -130,6 +136,9 @@ class Track:
     findings: list = dataclasses.field(default_factory=list)
     eff_bits: int | None = None
     spectrum: dict | None = None
+    seen_stat: tuple | None = None  # stat_key() when it was read: a later write refuses if the file changed since
+    comment_problems: list = dataclasses.field(default_factory=list)
+    unwritable: str = ''  # why fix/replaygain won't replace this file ('' if they will)
 
     def get(self, key):
         return [v for k, v in self.tags if k.upper() == key]
@@ -157,7 +166,21 @@ def run(cmd, **kw):
 def tail(text, n=200):
     text = text.decode(errors='replace') if isinstance(text, bytes) else text
     lines = [l for l in text.strip().splitlines() if l.strip()]
-    return (lines[-1] if lines else 'no error output')[:n]
+    line = lines[-1] if lines else 'no error output'
+    return line if len(line) <= n else '...' + line[-n:]  # the reason is at the end, after any long path
+
+
+def stat_key(st):
+    """Changes whenever the file's content or metadata is touched (ctime can't be set back)."""
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def fsync_path(path):
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def read_layout(path):
@@ -222,7 +245,9 @@ def audio_digest(path, layout):
 
 
 def image_info(data):
-    """(mime, width, height, depth, colors) from the image header, or None if unreadable."""
+    """(mime, width, height, depth, colors) from the image header, or None if unreadable.
+
+    depth/colors follow libFLAC (metaflac --import-picture-from): palette images are depth 24."""
     if data[:8] == b'\x89PNG\r\n\x1a\n' and len(data) >= 26 and data[12:16] == b'IHDR':
         w, h, bitdepth, ctype = struct.unpack('>IIBB', data[16:26])
         colors, pos = 0, 8
@@ -232,7 +257,8 @@ def image_info(data):
                 colors = ln // 3
                 break
             pos += 12 + ln
-        return 'image/png', w, h, bitdepth * {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}.get(ctype, 1), colors
+        depth = 24 if ctype == 3 else bitdepth * {0: 1, 2: 3, 4: 2, 6: 4}.get(ctype, 1)
+        return ('image/png', w, h, depth, colors) if depth and w and h else None
     if data[:3] == b'\xff\xd8\xff':
         pos = 2
         while pos + 4 <= len(data):
@@ -250,15 +276,61 @@ def image_info(data):
                 if pos + 10 > len(data):
                     return None
                 prec, h, w, comps = struct.unpack('>BHHB', data[pos + 4:pos + 10])
-                return 'image/jpeg', w, h, prec * comps, 0
+                return ('image/jpeg', w, h, prec * comps, 0) if prec and comps and w and h else None
             pos += 2 + ln
         return None
     if data[:6] in (b'GIF87a', b'GIF89a') and len(data) >= 11:
         w, h, packed = struct.unpack('<HHB', data[6:11])
-        bits = (packed & 7) + 1
-        return 'image/gif', w, h, bits, (1 << bits) if packed & 0x80 else 0
+        return 'image/gif', w, h, 24, 1 << ((packed & 7) + 1)
     return None
 
+
+def header_problem(p, info):
+    """What is wrong with a PICTURE header ('' if nothing): Qobuz leaves the size 0x0."""
+    if (p.width, p.height) != info[1:3]:
+        return f'header says {p.width}x{p.height}, image is {info[1]}x{info[2]}'
+    return 'header leaves the colour depth unset' if not p.depth and info[3] else ''
+
+
+def header_wrong(p, info):
+    """The PICTURE header's size is wrong or unset (Qobuz leaves 0x0). Other depth/colors
+    conventions are accepted as they are."""
+    return bool(header_problem(p, info))
+
+
+def comment_problems(path, layout):
+    """Vorbis comments mutagen cannot write back unchanged: not UTF-8, no '=', or an invalid key."""
+    raw = layout.block(path, 4)
+    if raw is None:
+        return []
+    problems, pos = [], 0
+
+    def take(n):
+        nonlocal pos
+        chunk = raw[pos:pos + n]
+        if len(chunk) < n:
+            raise BadFile('VORBIS_COMMENT block is truncated')
+        pos += n
+        return chunk
+    try:
+        vendor = take(int.from_bytes(take(4), 'little'))
+        try:
+            vendor.decode('utf-8')
+        except UnicodeDecodeError:
+            problems.append('the vendor string is not UTF-8')
+        for _ in range(int.from_bytes(take(4), 'little')):
+            c = take(int.from_bytes(take(4), 'little'))
+            key, eq, _ = c.partition(b'=')
+            try:
+                text = c.decode('utf-8')
+            except UnicodeDecodeError:
+                problems.append(f'{key.decode("ascii", "replace")[:30]} is not UTF-8')
+                continue
+            if not eq or not key or any(b < 0x20 or b > 0x7D for b in key):
+                problems.append(f'{text[:30]!r} is not KEY=value')
+    except BadFile as e:
+        problems.append(str(e))
+    return problems
 
 def picture_header(p):
     return {'type': p.type, 'mime': p.mime, 'desc': p.desc, 'width': p.width, 'height': p.height,
@@ -267,7 +339,7 @@ def picture_header(p):
 
 def int_tag(value):
     value = value.strip()
-    return int(value) if value.isdigit() and int(value) > 0 else None
+    return int(value) if value.isascii() and value.isdigit() and int(value) > 0 else None
 
 
 def fmt_rate(rate):
@@ -287,26 +359,30 @@ def album_dir(path):
 
 
 def album_files_on_disk(adir):
-    """Every FLAC file of an album: the folder itself plus its Disc NN subfolders."""
+    """Every FLAC file of an album: the folder itself plus its Disc NN subfolders (None if unreadable)."""
     found = set()
-    for d in [adir] + [os.path.join(adir, s) for s in sorted(os.listdir(adir))
-                       if DISC_DIR_RE.match(s) and os.path.isdir(os.path.join(adir, s))]:
-        for name in os.listdir(d):
-            if name.lower().endswith('.flac') and not name.startswith(TMP_PREFIX) and os.path.isfile(os.path.join(d, name)):
-                found.add(os.path.join(d, name))
+    try:
+        for d in [adir] + [os.path.join(adir, s) for s in sorted(os.listdir(adir))
+                           if DISC_DIR_RE.match(s) and os.path.isdir(os.path.join(adir, s))]:
+            for name in os.listdir(d):
+                if name.lower().endswith('.flac') and not name.startswith(TMP_PREFIX) and os.path.isfile(os.path.join(d, name)):
+                    found.add(os.path.join(d, name))
+    except OSError:
+        return None
     return found
 
 
 def expand(paths):
-    """FLAC files under the given paths, sorted, without our own temp files."""
-    out, seen = [], set()
+    """(FLAC files under the given paths, sorted; folders that could not be read; leftover temp files)."""
+    out, seen, errors, leftovers = [], set(), [], []
     for p in paths:
         p = os.path.abspath(p)
         if os.path.isdir(p):
             files = []
-            for d, dirs, names in os.walk(p):
+            for d, dirs, names in os.walk(p, onerror=errors.append):
                 dirs.sort()
                 files += [os.path.join(d, n) for n in names if n.lower().endswith('.flac') and not n.startswith(TMP_PREFIX)]
+                leftovers += [os.path.join(d, n) for n in names if n.startswith(TMP_PREFIX)]
         elif os.path.isfile(p):
             files = [p]
         else:
@@ -315,7 +391,7 @@ def expand(paths):
             if f not in seen:
                 seen.add(f)
                 out.append(f)
-    return out
+    return out, errors, sorted(leftovers)
 
 
 def display_root(paths):
@@ -335,11 +411,20 @@ def show(path, root):
 def load_track(path):
     t = Track(path)
     try:
-        t.layout = read_layout(path)
+        st = os.stat(path)
+        layout = read_layout(path)
         f = FLAC(path)
+        t.comment_problems = comment_problems(path, layout)
     except (BadFile, MutagenError, OSError, ValueError, struct.error) as e:
         t.add('ERROR', 'unreadable', f'cannot read FLAC metadata: {e}')
         return t
+    t.layout, t.seen_stat = layout, stat_key(st)  # set only when both parsers accepted the file
+    try:
+        writable_stat(path)
+    except BadFile as e:
+        t.unwritable = str(e)
+    if t.comment_problems:
+        t.unwritable = f"has Vorbis comments that can't be edited safely ({t.comment_problems[0]})"
     t.tags = list(f.tags) if f.tags is not None else []
     t.rate, t.bits, t.channels = f.info.sample_rate, f.info.bits_per_sample, f.info.channels
     t.samples, t.md5 = f.info.total_samples, f.info.md5_signature
@@ -358,12 +443,38 @@ def check_stream(t):
         t.add('WARN', 'md5-missing', 'STREAMINFO has no MD5 signature, so decoding cannot be verified '
                                      '(re-encode with flac to add one)')
     if not t.seektable:
-        t.add('INFO', 'no-seektable', 'no SEEKTABLE (slow seeking in some players)', bool(shutil.which('metaflac')))
+        t.add('INFO', 'no-seektable', 'no SEEKTABLE (slow seeking in some players)', can_add_seektable(t))
     if not t.samples:
         t.add('WARN', 'no-length', 'STREAMINFO does not give the number of samples')
 
 
+def synonym_plan(tags, syn):
+    """How fix resolves a synonym such as TOTALTRACKS: ('rename', value), ('drop', why),
+    ('conflict', why), or None when the file doesn't have it. check and fix both use this."""
+    canon = SYNONYMS[syn]
+    if not any(k.upper() == syn for k, _ in tags):
+        return None
+    syn_vals = sorted({v.strip() for k, v in tags if k.upper() == syn and v.strip()})
+    canon_vals = sorted({v.strip() for k, v in tags if k.upper() == canon and v.strip()})
+    if not syn_vals:
+        return 'drop', f'{syn} is empty'
+    if not canon_vals:
+        if len(syn_vals) == 1:
+            return 'rename', syn_vals[0]
+        return 'conflict', f'{syn} has several values: {", ".join(syn_vals)}'
+    if syn_vals == canon_vals:
+        return 'drop', f'{syn} repeats {canon}'
+    return 'conflict', f'{syn} {", ".join(syn_vals)} disagrees with {canon} {", ".join(canon_vals)}'
+
+
 def check_tags(t):
+    if t.comment_problems:
+        t.add('WARN', 'tag-unreadable', f'{len(t.comment_problems)} Vorbis comment(s) can\'t be edited safely '
+              f'({t.comment_problems[0]}); fix and replaygain leave this file alone')
+    for key in ('TRACKNUMBER', 'TRACKTOTAL', 'DISCNUMBER', 'DISCTOTAL'):
+        n = int_tag(t.first(key).split('/')[0])
+        if n and n > MAX_NUMBER:
+            t.add('WARN', 'tag-malformed', f'{key} {n} is implausibly large')
     seen = Counter((k.upper(), v) for k, v in t.tags)
     for (key, value), n in sorted(seen.items()):
         if n > 1:
@@ -382,14 +493,18 @@ def check_tags(t):
         number = {'TRACKTOTAL': 'TRACKNUMBER', 'DISCTOTAL': 'DISCNUMBER'}.get(key)
         if t.first(key) or (number and SLASH_RE.match(t.first(number))):
             continue  # a "3/12" number is reported (and fixed) as malformed instead
-        synonym = any(keys[s] for s, canon in SYNONYMS.items() if canon == key)
-        t.add('INFO', 'tag-missing-optional', f'{key} is missing', synonym)
+        renamed = any((synonym_plan(t.tags, s) or ('',))[0] == 'rename' for s, c in SYNONYMS.items() if c == key)
+        t.add('INFO', 'tag-missing-optional', f'{key} is missing', renamed)
     for key in sorted(keys):
         if key in SINGLE_TAGS and len({v.strip() for k, v in t.tags if k.upper() == key and v.strip()}) > 1:
             t.add('WARN', 'tag-multiple', f'{key} has several different values: ' +
                   ', '.join(repr(v) for v in t.get(key))[:150])
         if key in SYNONYMS:
-            t.add('INFO', 'tag-synonym', f'{key} should be {SYNONYMS[key]}', True)
+            action, detail = synonym_plan(t.tags, key)
+            if action == 'conflict':
+                t.add('WARN', 'tag-conflict', detail)
+            else:
+                t.add('INFO', 'tag-synonym', f'{key} should be {SYNONYMS[key]}', True)
     date = t.first('DATE')
     if date and not valid_date(date):
         t.add('WARN', 'tag-malformed', f'DATE {date!r} is not YYYY, YYYY-MM or YYYY-MM-DD')
@@ -439,15 +554,18 @@ def check_replaygain(t):
 
 
 def check_filename(t):
+    """'05 - ' is track 5; '105 - ' is disc 1 track 5 on multi-disc albums but track 105 on big single-disc ones."""
     m = FILE_NUM_RE.match(os.path.basename(t.path))
-    track, disc = int_tag(t.first('TRACKNUMBER').split('/')[0]), int_tag(t.first('DISCNUMBER').split('/')[0])
+    track = int_tag(t.first('TRACKNUMBER').split('/')[0])
     if not m or not track:
         return
-    n = int(m[1])
-    if n >= 100 and disc and len(m[1]) == 3:
-        if (n // 100, n % 100) != (disc, track):
-            t.add('WARN', 'filename-mismatch', f'file name says disc {n // 100} track {n % 100}, tags say disc {disc} track {track}')
-    elif n != track:
+    n, disc = int(m[1]), disc_of(t)
+    if n == track or (len(m[1]) == 3 and (n // 100, n % 100) == (disc, track)):
+        return
+    if len(m[1]) == 3 and n >= 100:
+        t.add('WARN', 'filename-mismatch', f'file name says disc {n // 100} track {n % 100} (or track {n}), '
+                                           f'tags say disc {disc} track {track}')
+    else:
         t.add('WARN', 'filename-mismatch', f'file name says track {n}, TRACKNUMBER says {track}')
 
 
@@ -470,8 +588,8 @@ def check_pictures(t):
         mime, w, h, depth, colors = info
         if p.mime.lower() != mime:
             t.add('WARN', 'cover-mime', f'picture #{i} is {mime} but its MIME type says {p.mime!r}', True)
-        if (p.width, p.height, p.depth, p.colors) != (w, h, depth, colors):
-            t.add('INFO', 'cover-header', f'picture #{i} header says {p.width}x{p.height}, image is {w}x{h}', True)
+        if header_wrong(p, info):
+            t.add('INFO', 'cover-header', f'picture #{i} {header_problem(p, info)}', True)
         if p.type == 3 and min(w, h) < COVER_MIN_PX:
             t.add('WARN', 'cover-small', f'front cover is only {w}x{h} (< {COVER_MIN_PX} px)')
         if p.type == 3 and (max(w, h) > COVER_MAX_PX or len(p.data) > COVER_MAX_BYTES):
@@ -567,12 +685,27 @@ def find_cliff(levels, rate):
         if below - above > best[1]:
             best = (i, below - above, below, above)
     i, drop, below, above = best
-    if i == 0:
+    if i == 0 or drop <= 0:
         return None
     mid, j = (below + above) / 2, top - 1
     while j > i - 10 and levels[j] <= mid:
         j -= 1
-    return (j + 1) * BAND_HZ, drop
+    return j * BAND_HZ + BAND_HZ // 2, drop  # middle of the last band with content
+
+
+def upsampled_from(rate, edge):
+    """The source rate a cliff at `edge` Hz points to, or None. Resamplers cut a little below the
+    old Nyquist (soxr: 21.2-21.4 kHz from 44.1, 23.1-23.5 from 48, which is also where genuine 48 kHz
+    material ends), and some leave images that reach a few kHz above it, so the windows are wider
+    than the Nyquist frequencies themselves."""
+    from_44 = 20800 <= edge <= 22200  # an edge lower than this is a lossy source, checked separately
+    if rate == 48000:
+        return '44.1 kHz' if from_44 else None
+    if rate > 48000 and edge <= 28000:
+        return '44.1 kHz' if from_44 else '48 kHz' if 22900 <= edge <= 23700 else '44.1 or 48 kHz'
+    if rate >= 176400 and edge <= 50000:
+        return '88.2 kHz' if edge <= 45000 else '96 kHz' if edge <= 48500 else '88.2 or 96 kHz'
+    return None
 
 
 def check_audio(t, spectral=True):
@@ -587,7 +720,7 @@ def check_audio(t, spectral=True):
             t.add('WARN', 'padded-bit-depth', f'{t.bits}-bit file holds {t.eff_bits}-bit audio (the low bits are always zero)')
         else:
             t.add('INFO', 'unused-bits', f'{t.bits}-bit file uses only {t.eff_bits} bits')
-    if not (spectral and np is not None):
+    if not (spectral and np is not None) or t.eff_bits is None:  # None: digital silence, nothing to measure
         return
     levels = band_levels(raw, t.rate, t.channels)
     cliff = find_cliff(levels, t.rate) if levels is not None else None
@@ -595,17 +728,11 @@ def check_audio(t, spectral=True):
         return
     edge, drop = cliff
     t.spectrum = {'edge_hz': edge, 'cliff_db': round(drop, 1)}
-    if t.rate > 48000 and drop >= UPSAMPLE_CLIFF_DB:
-        src = None
-        if edge <= 24000:
-            src = '44.1 kHz' if edge <= 22050 else '48 kHz'
-        elif t.rate >= 176400 and edge <= 48000:
-            src = '88.2 kHz' if edge <= 44100 else '96 kHz'
-        if src:
-            lossy = ', and the source may be lossy' if edge <= LOSSY_MAX_EDGE_HZ else ''
-            t.add('WARN', 'upsampled', f'probably upsampled from {src}: nothing above {edge / 1000:.1f} kHz '
-                                       f'({drop:.0f} dB cliff){lossy}')
-            return
+    threshold = UPSAMPLE_CLIFF_DB_48K if t.rate == 48000 else UPSAMPLE_CLIFF_DB
+    src = upsampled_from(t.rate, edge) if drop >= threshold else None
+    if src:
+        t.add('WARN', 'upsampled', f'probably upsampled from {src}: nothing above {edge / 1000:.1f} kHz '
+                                   f'({drop:.0f} dB cliff)')
     if edge <= LOSSY_MAX_EDGE_HZ and drop >= LOSSY_CLIFF_DB:
         t.add('WARN', 'lossy-source', f'possible lossy source: sharp cutoff at {edge / 1000:.1f} kHz ({drop:.0f} dB cliff); '
                                       'check with flacmeta spectrogram')
@@ -654,8 +781,10 @@ def group_albums(tracks):
         by_dir[album_dir(t.path)].append(t)
     albums = []
     for d in sorted(by_dir):
-        scanned = {t.path for t in by_dir[d]}
-        albums.append(Album(d, by_dir[d], album_files_on_disk(d) <= scanned))
+        on_disk = album_files_on_disk(d)
+        albums.append(Album(d, by_dir[d], on_disk is not None and on_disk <= {t.path for t in by_dir[d]}))
+        if on_disk is None:
+            albums[-1].add('ERROR', 'unreadable-folder', 'the album folder (or a disc folder in it) cannot be read')
     return albums
 
 
@@ -666,7 +795,7 @@ def check_album(a):
     for key in ALBUM_TAGS:
         vals = Counter('; '.join(album_value(t, key)) for t in tracks)
         if len(vals) > 1:
-            fill = '' in vals and len(vals) == 2
+            fill = '' in vals and len(vals) == 2 and not any(t.unwritable for t in tracks if not album_value(t, key))
             parts = ', '.join(f'{v!r} x{n}' if v else f'missing x{n}' for v, n in vals.most_common(4))
             a.add('WARN', 'album-inconsistent', f'{key} differs between tracks: {parts}', fill)
     for key in ('REPLAYGAIN_ALBUM_GAIN', 'REPLAYGAIN_ALBUM_PEAK'):
@@ -687,20 +816,28 @@ def check_album(a):
         return
     discs, numbers = defaultdict(list), {}
     for t in tracks:
-        discs[disc_of(t)].append(t)
+        d = disc_of(t)
+        if d <= MAX_NUMBER:
+            discs[d].append(t)
     for d, dts in discs.items():
         numbers[d] = Counter(int_tag(t.first('TRACKNUMBER').split('/')[0]) for t in dts)
         numbers[d].pop(None, None)
+        for n in [n for n in numbers[d] if n > MAX_NUMBER]:  # reported per file as malformed
+            del numbers[d][n]
     present = sum(len(n) for n in numbers.values())
     # Qobuz writes the whole album's count into TRACKTOTAL on every disc; other taggers write the
-    # disc's count. A total larger than every disc's highest track number is taken as album-wide.
-    album_total = a.consensus_int('TRACKTOTAL')
-    whole_album = len(discs) > 1 and album_total and all(album_total > max(n, default=0) for n in numbers.values())
+    # disc's count. On a multi-disc album (by folders or by DISCTOTAL), a total larger than every
+    # disc's highest track number is taken as album-wide.
+    sane = lambda n: n if n <= MAX_NUMBER else 0  # absurd totals are reported per file
+    album_total = sane(a.consensus_int('TRACKTOTAL'))
+    disc_total = sane(a.consensus_int('DISCTOTAL'))
+    multi_disc = len(discs) > 1 or disc_total > 1 or set(discs) - {1}
+    whole_album = multi_disc and album_total and all(album_total > max(n, default=0) for n in numbers.values())
     for d, nums in sorted(numbers.items()):
         for n, c in sorted(nums.items()):
             if c > 1:
                 a.add('WARN', 'track-duplicate', f'disc {d} track {n} appears {c} times')
-        total = 0 if whole_album else a.consensus_int('TRACKTOTAL', discs[d])
+        total = 0 if whole_album else sane(a.consensus_int('TRACKTOTAL', discs[d]))
         expected = max([total] + list(nums))
         missing = sorted(set(range(1, expected + 1)) - set(nums))
         if missing:
@@ -709,9 +846,8 @@ def check_album(a):
                   f'{"..." if len(missing) > 20 else ""} ({len(nums)} of {expected} present)')
     if whole_album and present < album_total:
         a.add('WARN', 'album-incomplete', f'{present} of {album_total} tracks present (TRACKTOTAL)')
-    disc_total = a.consensus_int('DISCTOTAL')
     missing = sorted(set(range(1, max([disc_total] + list(discs)) + 1)) - set(discs))
-    if missing:
+    if missing and discs:
         a.add('WARN', 'album-incomplete', f'missing disc(s) {", ".join(map(str, missing))} of {max(disc_total, max(discs))}')
 
 
@@ -732,11 +868,24 @@ def analyse(path, opts):
             check_audio(t, spectral=not opts.no_spectrum)
     except Exception as e:  # one odd file must not end a library-wide scan
         t.add('ERROR', 'check-failed', f'flacmeta could not finish checking this file: {type(e).__name__}: {e}')
+    if t.unwritable:
+        for f in t.findings:
+            f.fixable = False
+        if not t.comment_problems:  # those already have their own tag-unreadable finding
+            t.add('WARN', 'not-rewritable', f'fix and replaygain leave this file alone: it {t.unwritable}')
     return t
 
 
 def scan(paths, opts, label='Scanning'):
-    files = expand(paths)
+    files, opts.walk_errors, opts.leftovers = expand(paths)
+    for e in opts.walk_errors:
+        print(f'flacmeta: cannot read {e.filename}: {e.strerror}', file=sys.stderr)
+    if opts.leftovers and other_writer_running():
+        for f in opts.leftovers:
+            print(f'flacmeta: working file of a flacmeta run in progress (leave it): {f}', file=sys.stderr)
+        opts.leftovers = []
+    for f in opts.leftovers:
+        print(f'flacmeta: leftover temp file from an interrupted run (safe to delete): {f}', file=sys.stderr)
     if not files:
         sys.exit('flacmeta: no .flac files found')
     tracks, tty = [], sys.stderr.isatty()
@@ -756,7 +905,10 @@ def scan(paths, opts, label='Scanning'):
     tracks.sort(key=lambda t: t.path)
     albums = group_albums(tracks)
     for a in albums:
-        check_album(a)
+        try:
+            check_album(a)
+        except Exception as e:  # one odd album must not end a library-wide scan
+            a.add('ERROR', 'check-failed', f'flacmeta could not finish checking this album: {type(e).__name__}: {e}')
     return albums
 
 
@@ -767,7 +919,7 @@ def collapse(findings, ntracks):
         groups[(f.level, f.code, f.message, f.fixable)].append(f)
     out = []
     for (level, code, message, fixable), fs in groups.items():
-        if ntracks > 2 and len(fs) == ntracks and fs[0].path:
+        if ntracks > 2 and fs[0].path and len({f.path for f in fs}) == ntracks:
             out.append(Finding(level, code, message, '*', fixable))
         else:
             out.extend(fs)
@@ -784,13 +936,22 @@ def cmd_check(opts):
     albums = scan(opts.paths, opts)
     root = display_root(opts.paths)
     show_levels = LEVELS if opts.verbose else LEVELS[:2]
-    totals, fixable, ntracks = Counter(), 0, 0
+    totals, fixable, hidden_fixable, ntracks = Counter(), 0, 0, 0
+    for path in opts.leftovers:
+        totals[('WARN', 'leftover-temp')] += 1
+    covered = [a.dir for a in albums if any(f.code == 'unreadable-folder' for f in a.findings)]
+    for e in opts.walk_errors:  # an album's unreadable disc folder is already counted with the album
+        if not any(e.filename == d or e.filename.startswith(d + os.sep) for d in covered):
+            totals[('ERROR', 'unreadable-folder')] += 1
     for a in albums:
         ntracks += len(a.tracks)
         allf = a.findings + [f for t in a.tracks for f in t.findings]
         for f in allf:
             totals[(f.level, f.code)] += 1
-            fixable += f.fixable
+            if f.fixable and f.level in show_levels:
+                fixable += 1
+            elif f.fixable:
+                hidden_fixable += 1
         if opts.json:
             for t in a.tracks:
                 print(json.dumps({'type': 'track', 'path': t.path, 'album': a.dir, 'rate': t.rate, 'bits': t.bits,
@@ -816,9 +977,10 @@ def cmd_check(opts):
         for (level, code), n in sorted(totals.items(), key=lambda kv: (LEVELS.index(kv[0][0]), kv[0][1])):
             print(f'  {level:<5} {code:<26} {n}')
         if fixable:
-            print(f'{fixable} findings can be fixed: flacmeta fix PATH   (preview), then add --apply')
+            print(f'{fixable} of the findings listed can be fixed: flacmeta fix PATH   (preview), then add --apply')
         if not opts.verbose and any(lv == 'INFO' for lv, _ in totals):
-            print('INFO findings are counted but not listed: add -v to list them.')
+            more = f' ({hidden_fixable} of them fixable)' if hidden_fixable else ''
+            print(f'INFO findings are counted but not listed{more}: add -v to list them.')
     else:
         print('No problems found.')
     return 1 if any(lv == 'ERROR' for lv, _ in totals) else 0
@@ -852,41 +1014,96 @@ class UndoLog:
 
 def write_lock():
     os.makedirs(STATE_DIR, exist_ok=True)
+    global HOLDING_LOCK
     fh = open(os.path.join(STATE_DIR, 'lock'), 'w')
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         sys.exit('flacmeta: another flacmeta run is writing files; wait for it to finish')
+    HOLDING_LOCK = True
     return fh
 
 
+def other_writer_running():
+    """True while another flacmeta process holds the write lock."""
+    if HOLDING_LOCK:
+        return False
+    try:
+        with open(os.path.join(STATE_DIR, 'lock')) as fh:
+            fcntl.flock(fh, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return True
+    except OSError:
+        pass
+    return False
+
+
 def tmp_name(path):
-    d, name = os.path.split(path)
-    return os.path.join(d, f'{TMP_PREFIX}{secrets.token_hex(4)}-{name}')
+    """A hidden temp name next to path, short enough for any original name (NAME_MAX is 255 bytes)."""
+    return os.path.join(os.path.dirname(path), f'{TMP_PREFIX}{secrets.token_hex(4)}.flac')
+
+
+def writable_stat(path):
+    """os.stat(path), refusing files that replacing would break: symlinks and hard-linked files."""
+    if os.path.islink(path):
+        raise BadFile('is a symbolic link: run flacmeta on the file it points to')
+    st = os.stat(path)
+    if st.st_nlink > 1:
+        raise BadFile(f'has {st.st_nlink} hard links, which replacing it would split')
+    if os.geteuid() != 0 and st.st_uid != os.geteuid():
+        raise BadFile('belongs to another user, so replacing it would change its owner (run as that user or root)')
+    return st
 
 
 def make_copy(path, layout, lo=0, hi=None, prefix=b'', suffix=b''):
-    """Copy path[lo:hi] (with optional bytes around it) to a hidden temp file next to it."""
+    """Copy path[lo:hi] (with optional bytes around it) to a hidden temp file next to it. The copy
+    stays owner-writable while flacmeta edits it; copy_attrs() gives it the original's mode at the end."""
     tmp = tmp_name(path)
     hi = layout.size if hi is None else hi
-    if lo == 0 and hi == layout.size and not prefix and not suffix:
-        r = run(['cp', '--reflink=auto', '--', path, tmp])
-        if r.returncode:
-            raise BadFile(f'cp failed: {tail(r.stderr)}')
-    else:
-        with open(path, 'rb') as src, open(tmp, 'xb') as dst:
-            dst.write(prefix)
-            src.seek(lo)
-            left = hi - lo
-            while left > 0:
-                chunk = src.read(min(left, 4 << 20))
-                if not chunk:
-                    raise BadFile('file shrank while copying')
-                dst.write(chunk)
-                left -= len(chunk)
-            dst.write(suffix)
-    shutil.copymode(path, tmp)
+    try:
+        if lo == 0 and hi == layout.size and not prefix and not suffix:
+            r = run(['cp', '--reflink=auto', '--', path, tmp])
+            if r.returncode:
+                raise BadFile(f'cp failed: {tail(r.stderr)}')
+        else:
+            with open(path, 'rb') as src, open(tmp, 'xb') as dst:
+                dst.write(prefix)
+                src.seek(lo)
+                left = hi - lo
+                while left > 0:
+                    chunk = src.read(min(left, 4 << 20))
+                    if not chunk:
+                        raise BadFile('file shrank while copying')
+                    dst.write(chunk)
+                    left -= len(chunk)
+                dst.write(suffix)
+        os.chmod(tmp, 0o600)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
     return tmp
+
+
+def copy_attrs(src, dst):
+    """Owner (where allowed), mode and extended attributes (ACLs included) of src, onto dst."""
+    st = os.stat(src)
+    try:
+        os.chown(dst, st.st_uid, st.st_gid)
+    except PermissionError:  # not root: the owner is already ours, try to keep the group
+        with contextlib.suppress(PermissionError):
+            os.chown(dst, -1, st.st_gid)
+    new = os.stat(dst)
+    if (new.st_uid, new.st_gid) != (st.st_uid, st.st_gid):
+        raise BadFile("can't keep its owner and group (run as root, or as its owner and a member of its group)")
+    os.chmod(dst, stat.S_IMODE(st.st_mode))
+    try:
+        names = os.listxattr(src)
+    except OSError:
+        names = []
+    for name in names:
+        with contextlib.suppress(OSError):
+            os.setxattr(dst, name, os.getxattr(src, name))
 
 
 def verify_copy(path, layout, digest, tmp):
@@ -899,18 +1116,14 @@ def verify_copy(path, layout, digest, tmp):
     return new
 
 
-def replace(path, tmp, stat0):
-    st = os.stat(path)
-    if (st.st_size, st.st_mtime_ns) != stat0:
+def replace(path, tmp, stat0, check_stop=True):
+    fsync_path(tmp)
+    if stat_key(os.stat(path)) != stat0:
         raise BadFile('file changed while flacmeta was working on it; run again')
-    if STOP.is_set():
+    if check_stop and STOP.is_set():
         raise KeyboardInterrupt
     os.replace(tmp, path)
-    fd = os.open(os.path.dirname(path), os.O_RDONLY)
-    try:
-        os.fsync(fd)
-    finally:
-        os.close(fd)
+    fsync_path(os.path.dirname(path))
 
 
 def file_state(path, layout=None):
@@ -925,31 +1138,44 @@ def file_state(path, layout=None):
             'prefix': base64.b64encode(prefix).decode(), 'suffix': base64.b64encode(suffix).decode()}
 
 
-def rewrite(path, target, log, note=None):
-    """Bring the file to `target` (tags, picture headers, seektable, glued bytes) the safe way."""
-    st = os.stat(path)
-    stat0 = (st.st_size, st.st_mtime_ns)
+def set_pictures(f, headers):
+    """Give f's PICTURE blocks these headers, in file order; their image data must be what was planned for."""
+    pics = f.pictures
+    if [hashlib.sha1(p.data).hexdigest() for p in pics] != [h['sha1'] for h in headers]:
+        raise BadFile('the embedded pictures are not the ones the plan was made for')
+    for p, h in zip(pics, headers):
+        p.type, p.mime, p.desc = h['type'], h['mime'], h['desc']
+        p.width, p.height, p.depth, p.colors = h['width'], h['height'], h['depth'], h['colors']
+
+
+def rewrite(path, target, log, expect=None, note=None):
+    """Bring the file to `target` (tags, picture headers, seektable, glued bytes) the safe way.
+    `expect` is the stat_key() the plan was made from: if the file changed since, nothing is written."""
+    stat0 = stat_key(writable_stat(path))
+    if expect is not None and stat0 != expect:
+        raise BadFile('changed since flacmeta read it (another program?); run again')
     layout = read_layout(path)
+    problems = comment_problems(path, layout)
+    if problems:
+        raise BadFile(f"its Vorbis comments can't be edited safely ({problems[0]})")
     before = file_state(path, layout)
     digest = audio_digest(path, layout)
     if target['prefix'] is None:
         target = dict(target, prefix=before['prefix'], suffix=before['suffix'])
-    prefix, suffix = base64.b64decode(target['prefix']), base64.b64decode(target['suffix'])
-    tmp = make_copy(path, layout, layout.flac_start, layout.audio_end, prefix, suffix) \
-        if (target['prefix'], target['suffix']) != (before['prefix'], before['suffix']) else make_copy(path, layout)
+    tmp = None
     try:
+        if (target['prefix'], target['suffix']) != (before['prefix'], before['suffix']):
+            tmp = make_copy(path, layout, layout.flac_start, layout.audio_end,
+                            base64.b64decode(target['prefix']), base64.b64decode(target['suffix']))
+        else:
+            tmp = make_copy(path, layout)
         f = FLAC(tmp)
         if f.tags is None:
             f.add_tags()
         if [list(kv) for kv in f.tags] != target['tags']:
             del f.tags[:]
             f.tags.extend(tuple(kv) for kv in target['tags'])
-        by_sha = {h['sha1']: h for h in target['pictures']}
-        for p in f.pictures:
-            h = by_sha.get(hashlib.sha1(p.data).hexdigest())
-            if h:
-                p.type, p.mime, p.desc = h['type'], h['mime'], h['desc']
-                p.width, p.height, p.depth, p.colors = h['width'], h['height'], h['depth'], h['colors']
+        set_pictures(f, target['pictures'])
         f.save(deleteid3=False)
         if target['seektable'] != before['seektable']:
             cmd = ['metaflac', '--add-seekpoint=10s', tmp] if target['seektable'] else \
@@ -957,6 +1183,7 @@ def rewrite(path, target, log, note=None):
             r = run(cmd)
             if r.returncode:
                 raise BadFile(f'metaflac failed: {tail(r.stderr)}')
+        copy_attrs(path, tmp)
         verify_copy(path, layout, digest, tmp)
         after = file_state(tmp)
         for key in ('tags', 'pictures', 'seektable', 'prefix', 'suffix'):
@@ -967,12 +1194,13 @@ def rewrite(path, target, log, note=None):
         log.write({'path': path, 'note': note, 'before': before, 'after': after})
         replace(path, tmp, stat0)
     finally:
-        if os.path.exists(tmp):
+        if tmp and os.path.exists(tmp):
             os.unlink(tmp)
 
 
 def run_writes(jobs, items, work):
-    """Run work(item) in parallel; Ctrl+C/SIGTERM lets running items clean up, then stops."""
+    """Run work(item) in parallel; a failing item is reported and the others go on. On Ctrl+C,
+    SIGTERM or anything unexpected, running items finish or clean up before this raises."""
     done, failed = 0, []
     ex = cf.ThreadPoolExecutor(jobs)
     futs = {ex.submit(work, it): it for it in items}
@@ -984,10 +1212,10 @@ def run_writes(jobs, items, work):
                 done += 1
             except KeyboardInterrupt:
                 pass
-            except (BadFile, OSError, ValueError, subprocess.SubprocessError) as e:
+            except Exception as e:
                 failed.append(label)
                 print(f'FAILED {label}: {e}', file=sys.stderr)
-    except KeyboardInterrupt:
+    except BaseException:
         STOP.set()
         ex.shutdown(wait=True, cancel_futures=True)
         raise
@@ -995,24 +1223,43 @@ def run_writes(jobs, items, work):
     return done, failed
 
 
+def apply_writes(action, jobs, items, work):
+    """run_writes with an undo log: (done, failed, log). The log's path is printed even on interrupt."""
+    log = UndoLog(action)
+    try:
+        done, failed = run_writes(jobs, items, lambda it: work(it, log))
+    except KeyboardInterrupt:
+        if log.path:
+            print(f'\nflacmeta: files changed before the interrupt are recorded in {log.path}', file=sys.stderr)
+        raise
+    finally:
+        log.close()
+    return done, failed, log
+
+
 # ---------------------------------------------------------------------------------------------
 # fix
 
 
 def plan_fix(t, album, album_year):
-    """(new tags, picture header changes, strip glued tags, add seektable, change descriptions)."""
-    changes, tags = [], []
-    seen = set()
+    """(target for rewrite() or None, list of changes to show). Notes in parentheses are not changes."""
+    if t.unwritable:
+        return None, [f'(skipped: it {t.unwritable})']
+    changes, tags, seen, handled = [], [], set(), set()
+    synonyms = {syn: synonym_plan(t.tags, syn) for syn in SYNONYMS}
     for k, v in t.tags:
         key = k.upper()
-        if key in SYNONYMS:
-            canon = SYNONYMS[key]
-            if not t.first(canon) and v.strip():
-                changes.append(f'{key}={v.strip()!r} -> {canon}')
-                k, key = canon, canon
-            else:
-                changes.append(f'remove {key}={v!r} ({canon} is set)')
-                continue
+        action, detail = synonyms.get(key) or ('', '')
+        if action in ('drop', 'rename'):  # 'conflict': left as it is, check reports it
+            if key not in handled:
+                handled.add(key)
+                if action == 'drop':
+                    changes.append(f'remove {key} ({detail})')
+                else:
+                    changes.append(f'{key}={detail!r} -> {SYNONYMS[key]}')
+                    tags.append([SYNONYMS[key], detail])
+                    seen.add((SYNONYMS[key], detail))
+            continue
         nv = v if key in TEXT_TAGS else v.strip()
         if not nv.strip():
             changes.append(f'remove empty {key}')
@@ -1030,7 +1277,7 @@ def plan_fix(t, album, album_year):
             if m:
                 tags[i] = [k, m[1]]
                 changes.append(f'{num} {v!r} -> {m[1]!r}')
-                if not any(kk.upper() == total for kk, _ in tags):
+                if int_tag(m[2]) and not any(kk.upper() == total for kk, _ in tags):
                     tags.append([total, m[2]])
                     changes.append(f'add {total}={m[2]!r}')
     for key in ALBUM_TAGS:
@@ -1039,13 +1286,16 @@ def plan_fix(t, album, album_year):
             tags += [[key, v] for v in vals]
             changes.append(f'add {key}={"; ".join(vals)!r} (as on the rest of the album)')
     if album_year:
-        dates = album.consensus('DATE') or (t.first('DATE'),)
-        year = dates[0][:4] if DATE_RE.match(dates[0]) else None
+        years = {v.strip()[:4] for tr in album.tracks for v in tr.get('DATE') if DATE_RE.match(v.strip())}
+        year = years.pop() if len(years) == 1 else None
+        blocked = [os.path.basename(tr.path) for tr in album.tracks if tr.unwritable or not tr.layout]
         for i, (k, v) in enumerate(tags):
             if k.upper() != 'ALBUM':
                 continue
-            if not year:
-                changes.append('(--album-year: skipped, no usable DATE agreed on by the album)')
+            if blocked:  # renaming the others would split the album in two
+                changes.append(f'(--album-year: skipped, {blocked[0]} in this album can\'t be changed)')
+            elif not year:
+                changes.append('(--album-year: skipped, the album\'s tracks have no DATE year they agree on)')
             elif not v.rstrip().endswith(f'({year})'):
                 tags[i] = [k, f'{v.rstrip()} ({year})']
                 changes.append(f'ALBUM {v!r} -> {tags[i][1]!r}')
@@ -1058,14 +1308,14 @@ def plan_fix(t, album, album_year):
             if p.mime.lower() != mime:
                 changes.append(f'picture #{i}: MIME {p.mime!r} -> {mime!r}')
                 h['mime'] = mime
-            if (p.width, p.height, p.depth, p.colors) != (w, hh, depth, colors):
-                changes.append(f'picture #{i}: header {p.width}x{p.height} -> {w}x{hh}')
+            if header_wrong(p, info):
+                changes.append(f'picture #{i}: header {p.width}x{p.height}, depth {p.depth} -> {w}x{hh}, depth {depth}')
                 h.update(width=w, height=hh, depth=depth, colors=colors)
         pictures.append(h)
     strip = t.layout.flac_start > 0 or t.layout.audio_end < t.layout.size
     if strip:
         changes.append(f'strip glued ID3/APE tags ({fmt_size(t.layout.flac_start + t.layout.size - t.layout.audio_end)})')
-    seek = not t.seektable and bool(shutil.which('metaflac')) and t.samples > 0
+    seek = not t.seektable and can_add_seektable(t)
     if seek:
         changes.append('add SEEKTABLE (a point every 10 s)')
     if all(c.startswith('(') for c in changes):
@@ -1075,7 +1325,12 @@ def plan_fix(t, album, album_year):
             'prefix': '' if strip else None, 'suffix': '' if strip else None}, changes
 
 
+def can_add_seektable(t):
+    return bool(shutil.which('metaflac')) and t.samples > 0
+
+
 def cmd_fix(opts):
+    lock = write_lock() if opts.apply else None  # held from before the scan, so the plan can't go stale
     opts.quick, opts.no_spectrum = True, True
     albums = scan(opts.paths, opts, 'Reading')
     root = display_root(opts.paths)
@@ -1098,16 +1353,12 @@ def cmd_fix(opts):
     if not opts.apply:
         print(f'\n{len(plans)} files would change. Run again with --apply to write them.')
         return 0
-    lock = write_lock()
-    log = UndoLog('fix')
-    try:
-        done, failed = run_writes(opts.jobs, plans, lambda it: rewrite(it[1].path, it[2], log))
-    finally:
-        log.close()
-        lock.close()
+    done, failed, log = apply_writes('fix', opts.jobs, plans,
+                                     lambda it, log: rewrite(it[1].path, it[2], log, expect=it[1].seen_stat))
     print(f'\nChanged {done} files{f", {len(failed)} failed" if failed else ""}.')
     if log.path:
         print(f'Undo log: {log.path}\n  preview undo: flacmeta undo {log.path}')
+    del lock
     return 1 if failed else 0
 
 
@@ -1126,53 +1377,127 @@ def non_rg(tags):
     return Counter((k.upper(), v) for k, v in tags if not k.upper().startswith('REPLAYGAIN_'))
 
 
+def rg_order(before_tags, rsgain_tags):
+    """The file's own tags, in its own order and key case, with rsgain's REPLAYGAIN_* values
+    in place of the old ones (rsgain/TagLib re-sorts and upper-cases every key)."""
+    new = {}
+    for k, v in rsgain_tags:
+        if k.upper().startswith('REPLAYGAIN_'):
+            new.setdefault(k.upper(), v)
+    out, used = [], set()
+    for k, v in before_tags:
+        key = k.upper()
+        if not key.startswith('REPLAYGAIN_'):
+            out.append([k, v])
+        elif key in new and key not in used:
+            out.append([k, new[key]])
+            used.add(key)
+    rank = {k: i for i, k in enumerate(RG_TAGS)}
+    return out + [[k, v] for k, v in sorted(new.items(), key=lambda kv: rank.get(kv[0], len(rank))) if k not in used]
+
+
+def decodes(path):
+    if shutil.which('flac'):
+        return run(['flac', '-t', '-s', path]).returncode == 0
+    r = run(['ffmpeg', '-nostdin', '-v', 'error', '-i', 'file:' + path, '-map', '0:a:0', '-f', 'null', '-'])
+    return r.returncode == 0 and not r.stderr.strip()
+
+
+def without_rg(state):
+    return ([kv for kv in state['tags'] if not kv[0].upper().startswith('REPLAYGAIN_')],
+            state['pictures'], state['seektable'], state['prefix'], state['suffix'])
+
+
 def replaygain_album(album, log):
-    """rsgain on copies of every track of the album at once (one album gain), then replace."""
-    tracks = sorted(album.tracks, key=lambda t: t.path)
+    """rsgain on copies of every track of the album at once (one album gain). The tracks are then
+    replaced back to back, so an album is never left with two different album gains."""
     prep = []
-    for t in tracks:
-        st = os.stat(t.path)
+    for t in sorted(album.tracks, key=lambda t: t.path):
+        stat0 = stat_key(writable_stat(t.path))
+        if stat0 != t.seen_stat:
+            raise BadFile(f'{os.path.basename(t.path)} changed since flacmeta read it; run again')
+        if not decodes(t.path):  # a damaged track would still get a gain, and skew the album's
+            raise BadFile(f"{os.path.basename(t.path)} does not decode (see flacmeta check), so its ReplayGain can't be measured")
         layout = read_layout(t.path)
-        prep.append((t, (st.st_size, st.st_mtime_ns), layout, audio_digest(t.path, layout), file_state(t.path, layout)))
+        tags = FLAC(t.path).tags
+        vendor = tags.vendor if tags is not None else None
+        prep.append((t, stat0, layout, audio_digest(t.path, layout), file_state(t.path, layout), vendor))
     tmps = []
     try:
-        for t, _, layout, _, _ in prep:
+        for t, _, layout, *_ in prep:
             tmps.append(make_copy(t.path, layout))
         r = run(['rsgain'] + RSGAIN_ARGS + ['--'] + tmps)
         if r.returncode:
             raise BadFile(f'rsgain failed: {tail(r.stderr or r.stdout)}')
         afters = []
-        for (t, _, layout, digest, before), tmp in zip(prep, tmps):
+        for (t, _, layout, digest, before, vendor), tmp in zip(prep, tmps):
+            name = os.path.basename(t.path)
+            f = FLAC(tmp)
+            tagged = list(f.tags or [])
+            rg = {k.upper(): v for k, v in tagged if k.upper().startswith('REPLAYGAIN_')}
+            if not all(k in rg for k in RG_TAGS):
+                raise BadFile(f'rsgain did not write all ReplayGain tags to {name}')
+            if not PEAK_RE.match(rg['REPLAYGAIN_TRACK_PEAK']) or not GAIN_RE.match(rg['REPLAYGAIN_TRACK_GAIN']):
+                raise BadFile(f'rsgain wrote unreadable values to {name}')
+            del f.tags[:]
+            f.tags.extend(tuple(kv) for kv in rg_order(before['tags'], tagged))
+            if vendor is not None:
+                f.tags.vendor = vendor
+            f.save(deleteid3=False)
+            copy_attrs(t.path, tmp)
             verify_copy(t.path, layout, digest, tmp)
             after = file_state(tmp)
-            if non_rg(after['tags']) != non_rg(before['tags']) or after['pictures'] != before['pictures']:
-                raise BadFile(f'rsgain changed more than ReplayGain tags in {os.path.basename(t.path)}')
-            if not all(any(k.upper() == rg for k, _ in after['tags']) for rg in RG_TAGS):
-                raise BadFile(f'rsgain did not write all ReplayGain tags to {os.path.basename(t.path)}')
+            if without_rg(after) != without_rg(before):
+                raise BadFile(f'rsgain changed more than the ReplayGain tags of {name}')
             afters.append(after)
+        for t, stat0, *_ in prep:
+            if stat_key(os.stat(t.path)) != stat0:
+                raise BadFile(f'{os.path.basename(t.path)} changed while flacmeta was working on it; run again')
         if STOP.is_set():
             raise KeyboardInterrupt
-        for (t, stat0, _, _, before), tmp, after in zip(prep, tmps, afters):
+        for (t, _, _, _, before, _), after in zip(prep, afters):
             log.write({'path': t.path, 'note': 'replaygain', 'before': before, 'after': after})
-            replace(t.path, tmp, stat0)
+        replaced = 0
+        try:
+            for (t, stat0, *_), tmp in zip(prep, tmps):
+                replace(t.path, tmp, stat0, check_stop=False)  # no stopping halfway through an album
+                replaced += 1
+        except (BadFile, OSError) as e:
+            raise BadFile(f'album left partly tagged ({replaced} of {len(prep)} tracks replaced; '
+                          f'all are in the undo log): {e}')
     finally:
         for tmp in tmps:
             if os.path.exists(tmp):
                 os.unlink(tmp)
 
 
+def replaygain_blocker(album):
+    """Why this album can't be ReplayGain-tagged safely, or None."""
+    if any(not t.layout for t in album.tracks):
+        return 'has unreadable files'
+    if not album.complete:
+        return 'only part of the album was given (album gain needs every track)'
+    for t in album.tracks:
+        name = os.path.basename(t.path)
+        if t.layout.flac_start or t.layout.audio_end < t.layout.size:
+            return f'{name} has glued ID3/APE tags (rsgain would rewrite them): run flacmeta fix --apply first'
+        if t.unwritable:
+            return f'{name} {t.unwritable}'
+    return None
+
+
 def cmd_replaygain(opts):
     if not shutil.which('rsgain'):
         sys.exit('flacmeta: needs rsgain (chaotic-aur): sudo pacman -S --needed rsgain')
+    lock = write_lock() if opts.apply else None  # held from before the scan, so the plan can't go stale
     opts.quick, opts.no_spectrum = True, True
     albums = scan(opts.paths, opts, 'Reading')
     root = display_root(opts.paths)
     todo, skipped = [], 0
     for a in albums:
-        if any(not t.layout for t in a.tracks):
-            print(f'skip {show(a.dir, root)}: has unreadable files', file=sys.stderr)
-        elif not a.complete:
-            print(f'skip {show(a.dir, root)}: only part of the album was given (album gain needs every track)', file=sys.stderr)
+        blocker = replaygain_blocker(a)
+        if blocker:
+            print(f'skip {show(a.dir, root)}: {blocker}', file=sys.stderr)
         elif rg_done(a) and not opts.force:
             skipped += 1
         else:
@@ -1186,63 +1511,76 @@ def cmd_replaygain(opts):
     if not opts.apply:
         print(f'\n{len(todo)} albums would be scanned (rsgain, ReplayGain 2.0, -18 LUFS). Run again with --apply.')
         return 0
-    lock = write_lock()
-    log = UndoLog('replaygain')
-    try:
-        done, failed = run_writes(max(1, opts.jobs // 2), todo, lambda it: replaygain_album(it[1], log))
-    finally:
-        log.close()
-        lock.close()
+    done, failed, log = apply_writes('replaygain', max(1, opts.jobs // 2), todo,
+                                     lambda it, log: replaygain_album(it[1], log))
     print(f'\nTagged {done} album(s){f", {len(failed)} failed" if failed else ""}.')
     if log.path:
         print(f'Undo log: {log.path}')
+    del lock
     return 1 if failed else 0
 
 
 # ---------------------------------------------------------------------------------------------
 # undo
 
+STATE_FIELDS = ('tags', 'pictures', 'seektable', 'prefix', 'suffix')
+
 
 def cmd_undo(opts):
+    lock = write_lock() if opts.apply else None
+    records = []
     try:
-        with open(opts.log, encoding='utf-8') as fh:
-            records = [json.loads(line) for line in fh if line.strip()]
-    except (OSError, json.JSONDecodeError) as e:
+        with open(opts.log, encoding='utf-8', errors='replace') as fh:
+            for n, line in enumerate(fh, 1):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                    if not all(isinstance(r[k], dict) and all(f in r[k] for f in STATE_FIELDS) for k in ('before', 'after')):
+                        raise KeyError('before/after state is incomplete')
+                    records.append((r['path'], r['before'], r['after']))
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    # a record cut short by a crash: its file was never replaced (records come first)
+                    print(f'warning: line {n} of the undo log is unreadable and was skipped ({e})', file=sys.stderr)
+    except OSError as e:
         sys.exit(f'flacmeta: cannot read undo log: {e}')
+    if not records:
+        sys.exit('flacmeta: the undo log has no readable records')
     latest = {}
-    for r in records:  # one file may appear once; keep the first "before" and the last "after"
-        latest.setdefault(r['path'], {'before': r['before']})['after'] = r['after']
+    for path, before, after in records:  # a file may appear more than once: first "before", last "after"
+        latest.setdefault(path, {'before': before})['after'] = after
     plans = []
     for path, r in latest.items():
-        if not os.path.isfile(path):
+        try:
+            st = writable_stat(path)
+            now = file_state(path)
+        except FileNotFoundError:
             print(f'skip {path}: file is gone')
             continue
-        try:
-            now = file_state(path)
         except (BadFile, OSError, MutagenError) as e:
             print(f'skip {path}: {e}')
             continue
-        if now == r['before']:
+        # restore only what this log changed, so later runs' changes to other fields survive
+        changed = [k for k in STATE_FIELDS if r['before'][k] != r['after'][k]]
+        if all(now[k] == r['before'][k] for k in changed):
             continue
-        if now['tags'] != r['after']['tags'] and not opts.force:
-            print(f'skip {path}: tags changed since this log was written (--force restores anyway)')
+        if any(now[k] != r['after'][k] for k in changed) and not opts.force:
+            print(f'skip {path}: changed since this log was written (--force restores anyway)')
             continue
-        print(f'restore {path}')
-        plans.append((path, r['before']))
+        print(f'restore {path}  ({", ".join(changed)})')
+        plans.append((path, dict(now, **{k: r['before'][k] for k in changed}), stat_key(st)))
     if not plans:
         print('Nothing to undo.')
         return 0
     if not opts.apply:
         print(f'\n{len(plans)} files would be restored. Run again with --apply.')
         return 0
-    lock = write_lock()
-    log = UndoLog('undo')
-    try:
-        done, failed = run_writes(opts.jobs, plans, lambda it: rewrite(it[0], it[1], log, note=f'undo {opts.log}'))
-    finally:
-        log.close()
-        lock.close()
+    done, failed, log = apply_writes('undo', opts.jobs, plans,
+                                     lambda it, log: rewrite(it[0], it[1], log, expect=it[2], note=f'undo {opts.log}'))
     print(f'\nRestored {done} files{f", {len(failed)} failed" if failed else ""}.')
+    if log.path:
+        print(f'Undo log for this undo: {log.path}')
+    del lock
     return 1 if failed else 0
 
 
@@ -1298,7 +1636,8 @@ def cmd_info(opts):
 
 def cmd_spectrogram(opts):
     src = os.path.abspath(opts.file)
-    out = opts.output or f'{os.path.splitext(os.path.basename(src))[0]} spectrogram.png'
+    stem = os.path.splitext(os.path.basename(src))[0].encode()[:200].decode(errors='ignore')  # file names max 255 bytes
+    out = opts.output or f'{stem} spectrogram.png'
     if os.path.exists(out) and not opts.force:
         sys.exit(f'flacmeta: {out} exists (--force overwrites it)')
     r = run(['ffmpeg', '-nostdin', '-hide_banner', '-v', 'error', '-y', '-i', 'file:' + src, '-filter_complex',
@@ -1316,38 +1655,45 @@ def cmd_spectrogram(opts):
 def main(argv=None):
     p = argparse.ArgumentParser(prog='flacmeta', description='Check, fix and ReplayGain-tag a FLAC library.')
     p.add_argument('-j', '--jobs', type=int, default=os.cpu_count() or 4, help='parallel files (default: CPU count)')
+    jobs = argparse.ArgumentParser(add_help=False)  # so -j also works after the command
+    jobs.add_argument('-j', '--jobs', type=int, default=argparse.SUPPRESS, help='parallel files (default: CPU count)')
     sub = p.add_subparsers(dest='cmd', required=True)
-    c = sub.add_parser('check', help='read-only health report')
+
+    def command(name, **kw):
+        return sub.add_parser(name, parents=[jobs], **kw)
+    c = command('check', help='read-only health report')
     c.add_argument('paths', nargs='+')
     c.add_argument('-v', '--verbose', action='store_true', help='list INFO findings too')
     c.add_argument('--quick', action='store_true', help='skip decoding: tags, covers and layout only')
     c.add_argument('--no-spectrum', action='store_true', help='skip the lossy/upsampling analysis')
     c.add_argument('--json', action='store_true', help='JSON lines: every track with its measurements and findings')
-    f = sub.add_parser('fix', help='preview tag/cover/layout fixes; --apply writes them')
+    f = command('fix', help='preview tag/cover/layout fixes; --apply writes them')
     f.add_argument('paths', nargs='+')
     f.add_argument('--album-year', action='store_true', help="ALBUM=Curtis -> 'Curtis (1970)', year from DATE")
     f.add_argument('--apply', action='store_true', help='write the changes')
-    r = sub.add_parser('replaygain', help='ReplayGain 2.0 per album with rsgain; --apply writes')
+    r = command('replaygain', help='ReplayGain 2.0 per album with rsgain; --apply writes')
     r.add_argument('paths', nargs='+')
     r.add_argument('--force', action='store_true', help='rescan albums that already have ReplayGain tags')
     r.add_argument('--apply', action='store_true', help='write the tags')
-    i = sub.add_parser('info', help='everything about one or more files')
+    i = command('info', help='everything about one or more files')
     i.add_argument('files', nargs='+')
-    s = sub.add_parser('spectrogram', help='write a spectrogram PNG')
+    s = command('spectrogram', help='write a spectrogram PNG')
     s.add_argument('file')
     s.add_argument('-o', '--output', help="PNG path (default: './<name> spectrogram.png')")
     s.add_argument('--force', action='store_true', help='overwrite an existing PNG')
-    u = sub.add_parser('undo', help='preview restoring the files in an undo log; --apply restores')
+    u = command('undo', help='preview restoring the files in an undo log; --apply restores')
     u.add_argument('log')
     u.add_argument('--apply', action='store_true')
-    u.add_argument('--force', action='store_true', help='restore even files whose tags changed since')
+    u.add_argument('--force', action='store_true', help='restore files even if what the log changed was changed again since')
     opts = p.parse_args(argv)
     opts.jobs = max(1, opts.jobs)
     opts.quick = getattr(opts, 'quick', False)
     opts.no_spectrum = getattr(opts, 'no_spectrum', False)
-    for tool in ('ffmpeg',):
-        if not shutil.which(tool) and opts.cmd in ('check', 'info', 'spectrogram'):
-            sys.exit(f'flacmeta: needs {tool}: sudo pacman -S --needed {tool}')
+    if not shutil.which('ffmpeg') and (opts.cmd in ('info', 'spectrogram') or (opts.cmd == 'check' and not opts.quick)):
+        sys.exit('flacmeta: needs ffmpeg: sudo pacman -S --needed ffmpeg')
+    for stream in (sys.stdout, sys.stderr):  # a file name that isn't UTF-8 must not crash a long run
+        with contextlib.suppress(AttributeError, ValueError):
+            stream.reconfigure(errors='backslashreplace')
 
     def on_term(signum, frame):
         raise KeyboardInterrupt
@@ -1357,7 +1703,8 @@ def main(argv=None):
                 'spectrogram': cmd_spectrogram, 'undo': cmd_undo}[opts.cmd](opts)
     except KeyboardInterrupt:
         STOP.set()
-        print('\nflacmeta: interrupted; files being written were left unchanged', file=sys.stderr)
+        print('\nflacmeta: interrupted; files (or an album) already being swapped in were finished, '
+              'the rest were left unchanged', file=sys.stderr)
         return 130
     except BrokenPipeError:
         return 141

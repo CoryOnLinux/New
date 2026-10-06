@@ -3,7 +3,9 @@
 Run: python -m unittest discover -s tests -v   (from the flacmeta folder)
 Needs ffmpeg, flac/metaflac, mutagen, numpy; the replaygain test also needs rsgain.
 """
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -270,7 +272,8 @@ class TestCheck(unittest.TestCase):
         code, out, err = cli('check', '--no-spectrum', self.lib)
         self.assertIn('Curtis Mayfield/Curtis (1970)  [3 tracks', out)
         self.assertIn('ERROR decode-error', out.replace('  ', ' '))
-        self.assertIn('findings can be fixed', out)
+        self.assertIn('of the findings listed can be fixed', out)
+        self.assertIn('fixable): add -v', out)
 
 
 class TestWrites(unittest.TestCase):
@@ -419,6 +422,362 @@ class TestWrites(unittest.TestCase):
         code, out, err = cli('replaygain', m, env=self.env)
         self.assertIn('skip  1 album(s) that already have ReplayGain tags', out)
         self.assertFalse(self.leftovers())
+
+
+class LibraryCase(unittest.TestCase):
+    """Each test gets a scratch folder and its own undo-log state directory."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix='flacmeta-r-')
+        self.state = os.path.join(self.tmp, 'state')
+        self.env = dict(os.environ, XDG_STATE_HOME=self.state)
+        self.lib = Library.build()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def album(self, rel, name=None):
+        dst = os.path.join(self.tmp, name or os.path.basename(rel))
+        shutil.copytree(os.path.join(self.lib, rel), dst)
+        return dst
+
+    def flacs(self, d):
+        return sorted(os.path.join(r, n) for r, _, ns in os.walk(d) for n in ns if n.endswith('.flac'))
+
+    def log(self, prefix):
+        d = os.path.join(self.state, 'flacmeta')
+        return os.path.join(d, [n for n in os.listdir(d) if n.startswith(prefix)][0])
+
+
+class TestReviewFixes(LibraryCase):
+    """Regression tests for the problems found by the multi-agent review."""
+
+    def test_stale_plan_is_not_written(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        p = self.flacs(a)[1]
+        t = fm.load_track(p)
+        target, _ = fm.plan_fix(t, fm.group_albums([t])[0], True)
+        subprocess.run(['metaflac', '--set-tag=REPLAYGAIN_TRACK_GAIN=-7.00 dB', p], check=True)
+        with self.assertRaises(fm.BadFile):
+            fm.rewrite(p, target, fm.UndoLog('test'), expect=t.seen_stat)
+        self.assertEqual(FLAC(p)['REPLAYGAIN_TRACK_GAIN'], ['-7.00 dB'])
+
+    def test_unexpected_error_is_one_failed_file(self):
+        from mutagen import MutagenError
+
+        def work(item):
+            if item[0] == 'b':
+                raise MutagenError('[Errno 13] Permission denied')
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            done, failed = fm.run_writes(2, [('a',), ('b',), ('c',)], work)
+        self.assertIn('FAILED b', err.getvalue())
+        self.assertEqual((done, failed), (2, ['b']))
+        self.assertFalse(fm.STOP.is_set())
+
+    def test_same_image_twice_can_be_fixed_and_undone(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        p = self.flacs(a)[1]
+        f = FLAC(p)
+        back = Picture()
+        back.type, back.mime, back.desc, back.data = 4, 'image/jpeg', 'back', f.pictures[0].data
+        f.add_picture(back)
+        f.save()
+        before = fm.file_state(p)
+        code, out, err = cli('fix', '--apply', p, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual([(q.type, q.width) for q in FLAC(p).pictures], [(3, 600), (4, 600)])
+        code, out, err = cli('undo', '--apply', self.log('fix-'), env=self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(fm.file_state(p), before)
+
+    def test_torn_undo_log_still_restores(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        before = {p: fm.file_state(p) for p in self.flacs(a)}
+        self.assertEqual(cli('fix', '--apply', a, env=self.env)[0], 0)
+        log = self.log('fix-')
+        with open(log, 'a') as f:
+            f.write('{"v": 1, "path": "/x", "before": {"tags": [["LAB')
+        code, out, err = cli('undo', '--apply', log, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn('unreadable and was skipped', err)
+        self.assertEqual({p: fm.file_state(p) for p in self.flacs(a)}, before)
+
+    def test_unicode_digits_do_not_crash(self):
+        self.assertIsNone(fm.int_tag('\u00b2'))
+        a = self.album('Various/Multi (2001)')
+        subprocess.run(['metaflac', '--remove-tag=TRACKNUMBER', '--set-tag=TRACKNUMBER=\u00b2', self.flacs(a)[0]], check=True)
+        code, out, err = cli('check', '--quick', a)
+        self.assertNotIn('Traceback', err)
+        self.assertIn("TRACKNUMBER '\u00b2' is not a positive number", out)
+
+    def test_absurd_track_number_does_not_blow_up(self):
+        a = self.album('-dash: \u00dcn\u00ef/Gappy (2010)')
+        subprocess.run(['metaflac', '--remove-tag=TRACKNUMBER', '--set-tag=TRACKNUMBER=20240101', self.flacs(a)[0]], check=True)
+        started = time.monotonic()
+        code, out, err = cli('check', '--quick', a)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertNotIn('Traceback', err)
+
+    def test_48k_upsampled_from_44k(self):
+        fake, real = os.path.join(self.tmp, 'fake.flac'), os.path.join(self.tmp, 'real.flac')
+        noise(fake, rate=48000, fmt='s32', src_rate=44100)
+        noise(real, rate=48000, fmt='s32')
+        _, files, _ = findings(self.tmp)
+        self.assertIn('upsampled', codes(files['fake.flac']))
+        self.assertFalse(codes(files['real.flac']) & {'upsampled', 'lossy-source'})
+
+    def test_silence_has_no_spectrum(self):
+        p = os.path.join(self.tmp, 'silence.flac')
+        ff('-f', 'lavfi', '-i', 'anullsrc=r=96000:cl=stereo', '-t', '20', '-c:a', 'flac', '-sample_fmt', 's32', 'file:' + p)
+        _, files, _ = findings(self.tmp)
+        self.assertNotIn('edge_hz', files['silence.flac'])
+
+    def test_album_year_needs_the_album_to_agree(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        last = self.flacs(a)[2]
+        subprocess.run(['metaflac', '--remove-tag=DATE', '--set-tag=DATE=2007-05-01', last], check=True)
+        code, out, err = cli('fix', '--album-year', '--apply', a, env=self.env)
+        self.assertEqual(code, 0, err)
+        self.assertEqual({FLAC(p)['ALBUM'][0] for p in self.flacs(a)}, {'Curtis'})
+        self.assertIn('skipped', out)
+
+    def test_synonym_conflicts_and_zero_totals(self):
+        a = self.album('Various/Multi (2001)')
+        p1, p2, p3 = self.flacs(a)[:3]
+        subprocess.run(['metaflac', '--set-tag=TOTALTRACKS=12', p1], check=True)  # disagrees with TRACKTOTAL=4
+        subprocess.run(['metaflac', '--remove-tag=TRACKTOTAL', '--set-tag=TOTALTRACKS=', p2], check=True)
+        subprocess.run(['metaflac', '--remove-tag=TRACKNUMBER', '--set-tag=TRACKNUMBER=2/0', p3], check=True)
+        _, files, _ = findings(a, '--quick')
+        rel = lambda p: os.path.relpath(p, a)
+        self.assertIn('tag-conflict', codes(files[rel(p1)]))
+        missing = [f for f in files[rel(p2)]['findings'] if f['message'] == 'TRACKTOTAL is missing']
+        self.assertFalse(missing[0]['fixable'])  # an empty TOTALTRACKS can't supply it
+        self.assertEqual(cli('fix', '--apply', a, env=self.env)[0], 0)
+        self.assertEqual(FLAC(p1)['TOTALTRACKS'], ['12'])  # conflicts are left for a person to decide
+        self.assertNotIn('TOTALTRACKS', FLAC(p2))
+        self.assertEqual((FLAC(p3)['TRACKNUMBER'], FLAC(p3).get('TRACKTOTAL')), (['2'], ['4']))
+        _, files, _ = findings(a, '--quick')
+        self.assertFalse([f for r in files.values() for f in r['findings']
+                          if f['code'] == 'tag-malformed' and 'TOTAL' in f['message']])
+
+    def test_three_digit_names_on_a_big_single_disc_album(self):
+        t = fm.Track('/x/Big (2020)/101 - Song.flac', tags=[('TRACKNUMBER', '101'), ('DISCNUMBER', '1')])
+        fm.check_filename(t)
+        self.assertEqual(t.findings, [])
+        t = fm.Track('/x/Multi/Disc 02/203 - Song.flac', tags=[('TRACKNUMBER', '3'), ('DISCNUMBER', '2')])
+        fm.check_filename(t)
+        self.assertEqual(t.findings, [])
+
+    def test_album_with_a_missing_disc_folder(self):
+        a = self.album('Various/Multi (2001)')
+        shutil.rmtree(os.path.join(a, 'Disc 02'))
+        _, _, albums = findings(a, '--quick')
+        messages = [f['message'] for fs in albums.values() for f in fs if f['code'] == 'album-incomplete']
+        self.assertIn('2 of 4 tracks present (TRACKTOTAL)', messages)
+        self.assertIn('missing disc(s) 2 of 2', messages)
+        self.assertFalse([m for m in messages if 'missing track' in m])
+
+    def test_collapse_counts_files_not_findings(self):
+        mk = lambda path: fm.Finding('WARN', 'tag-empty', 'COMMENT is empty', path, True)
+        out = fm.collapse([mk('a'), mk('a'), mk('b')], 3)
+        self.assertEqual([f.path for f in out], ['a', 'a', 'b'])
+
+    def test_temp_names_fit_any_file_name(self):
+        name = os.path.join('/music', '\u4ea4' * 80 + '.flac')
+        self.assertLess(len(os.path.basename(fm.tmp_name(name)).encode()), 40)
+
+    def test_failed_copy_leaves_no_temp_file(self):
+        a = self.album('Tests/Audio (2020)')
+        target = self.flacs(a)[0]
+        subprocess.run(['metaflac', '--remove', '--block-type=SEEKTABLE', target], check=True)
+        shim = os.path.join(self.tmp, 'shim')
+        os.makedirs(shim)
+        with open(os.path.join(shim, 'cp'), 'w') as f:  # writes half a file, then fails like a full disk
+            f.write('#!/bin/sh\nfor last; do :; done\nhead -c 1000 "$3" > "$last"\necho "cp: No space left on device" >&2\nexit 1\n')
+        os.chmod(os.path.join(shim, 'cp'), 0o755)
+        env = dict(self.env, PATH=shim + os.pathsep + os.environ['PATH'])
+        code, out, err = cli('fix', '--apply', target, env=env)
+        self.assertEqual(code, 1)
+        self.assertIn('No space left', err)
+        self.assertEqual([n for n in os.listdir(a) if n.startswith(fm.TMP_PREFIX)], [])
+
+    def test_jobs_option_after_the_command(self):
+        code, out, err = cli('check', '-j', '2', '--quick', os.path.join(self.lib, 'Various'))
+        self.assertNotIn('unrecognized', err)
+        self.assertIn('Checked 4 files', out)
+
+    def test_quick_check_without_ffmpeg(self):
+        env = dict(os.environ, PATH=os.path.join(self.tmp, 'empty'))
+        code, out, err = cli('check', '--quick', os.path.join(self.lib, 'Various'), env=env)
+        self.assertIn('Checked 4 files', out, err)
+
+    def test_non_utf8_file_name(self):
+        d = os.path.join(self.tmp, 'enc').encode()
+        os.makedirs(d)
+        shutil.copy(self.flacs(os.path.join(self.lib, 'Various'))[0].encode(), os.path.join(d, b'01 - Caf\xe9.flac'))
+        r = subprocess.run([sys.executable, SCRIPT, 'check', '-v', '--quick', d], capture_output=True,
+                           env=dict(os.environ, LC_ALL='C.UTF-8'))
+        self.assertNotIn(b'Traceback', r.stderr)
+        self.assertIn(b'01 - Caf\\udce9.flac', r.stdout)  # the raw byte, escaped
+
+    def test_comments_that_are_not_utf8_are_left_alone(self):
+        a = self.album('Various/Multi (2001)')
+        p = self.flacs(a)[0]
+        subprocess.run(['metaflac', '--set-tag=COMMENT=Cafe!', p], check=True)
+        with open(p, 'rb') as f:
+            data = f.read()
+        with open(p, 'wb') as f:
+            f.write(data.replace(b'COMMENT=Cafe!', b'COMMENT=Caf\xe9!'))
+        _, files, _ = findings(a, '--quick')
+        self.assertIn('tag-unreadable', codes(files[os.path.relpath(p, a)]))
+        before = read(p)
+        code, out, err = cli('fix', '--apply', p, env=self.env)
+        self.assertIn('skipped', out)
+        self.assertEqual(read(p), before)
+
+    @unittest.skipUnless(shutil.which('rsgain'), 'rsgain not installed')
+    def test_replaygain_keeps_tag_order_and_refuses_glued_tags(self):
+        a = self.album('Various/Multi (2001)')
+        order = {p: [k for k, _ in FLAC(p).tags if not k.upper().startswith('REPLAYGAIN')] for p in self.flacs(a)}
+        code, out, err = cli('replaygain', '--apply', a, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        for p, keys in order.items():
+            tags = FLAC(p).tags
+            self.assertEqual([k for k, _ in tags if not k.upper().startswith('REPLAYGAIN')], keys)
+            self.assertEqual([k for k, _ in tags][-4:], list(fm.RG_TAGS))
+        g = self.album('Curtis Mayfield/Curtis (1970)')
+        code, out, err = cli('replaygain', '--apply', g, env=self.env)
+        self.assertIn('glued ID3/APE tags', err)
+        self.assertNotIn('REPLAYGAIN_TRACK_GAIN', FLAC(self.flacs(g)[1]))
+
+    @unittest.skipUnless(shutil.which('rsgain'), 'rsgain not installed')
+    def test_undo_restores_only_what_its_log_changed(self):
+        a = self.album('Various/Multi (2001)')
+        for p in self.flacs(a):
+            f = FLAC(p)
+            f.pictures[0].width = f.pictures[0].height = 0
+            f.save()
+        self.assertEqual(cli('replaygain', '--apply', a, env=self.env)[0], 0)
+        rg_log = self.log('replaygain-')
+        self.assertEqual(cli('fix', '--apply', a, env=self.env)[0], 0)  # fills the picture headers
+        code, out, err = cli('undo', '--apply', rg_log, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        for p in self.flacs(a):
+            f = FLAC(p)
+            self.assertNotIn('REPLAYGAIN_TRACK_GAIN', f)
+            self.assertEqual(f.pictures[0].width, 600)  # the later fix survives
+
+
+class TestSecondPassFixes(LibraryCase):
+    """Regression tests for what the re-verification of the review fixes found."""
+
+    def test_linked_files_are_reported_and_skipped(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        p = self.flacs(a)[1]
+        os.link(p, os.path.join(self.tmp, 'elsewhere.flac'))
+        _, files, _ = findings(a, '--quick')
+        rec = files[os.path.relpath(p, a)]
+        self.assertIn('not-rewritable', codes(rec))
+        self.assertFalse([f for f in rec['findings'] if f['fixable']])
+        code, out, err = cli('fix', '--apply', a, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn('(skipped: it has 2 hard links', out)
+        self.assertNotIn('FAILED', err)
+
+    def test_owner_must_be_kept(self):
+        from unittest import mock
+        p = self.flacs(self.album('Various/Multi (2001)'))[0]
+        with mock.patch.object(fm.os, 'geteuid', return_value=os.stat(p).st_uid + 1):
+            with self.assertRaises(fm.BadFile):
+                fm.writable_stat(p)
+
+    def test_album_year_waits_for_every_track(self):
+        a = self.album('Various/Multi (2001)')
+        bad = self.flacs(a)[0]
+        subprocess.run(['metaflac', '--set-tag=COMMENT=Cafe!', bad], check=True)
+        with open(bad, 'rb') as f:
+            data = f.read()
+        with open(bad, 'wb') as f:
+            f.write(data.replace(b'COMMENT=Cafe!', b'COMMENT=Caf\xe9!'))
+        code, out, err = cli('fix', '--album-year', '--apply', a, env=self.env)
+        self.assertIn("can't be changed", out)
+        self.assertEqual({FLAC(p)['ALBUM'][0] for p in self.flacs(a)}, {'Multi'})
+
+    def test_cover_with_no_depth_is_unreadable(self):
+        jpg = bytearray(read(os.path.join(self.lib, 'Curtis Mayfield', 'Curtis (1970)', 'cover.jpg')))
+        sof = next(i for i in range(len(jpg) - 1) if jpg[i] == 0xFF and jpg[i + 1] in (0xC0, 0xC2))
+        jpg[sof + 4] = 0  # precision
+        self.assertIsNone(fm.image_info(bytes(jpg)))
+
+    def test_undo_skips_a_record_with_a_broken_state(self):
+        a = self.album('Curtis Mayfield/Curtis (1970)')
+        before = {p: fm.file_state(p) for p in self.flacs(a)}
+        self.assertEqual(cli('fix', '--apply', a, env=self.env)[0], 0)
+        log = self.log('fix-')
+        with open(log, 'a') as f:
+            f.write(json.dumps({'path': '/x.flac', 'before': {}, 'after': None}) + '\n')
+        code, out, err = cli('undo', '--apply', log, env=self.env)
+        self.assertEqual(code, 0, out + err)
+        self.assertIn('unreadable and was skipped', err)
+        self.assertEqual({p: fm.file_state(p) for p in self.flacs(a)}, before)
+
+    @unittest.skipUnless(shutil.which('rsgain'), 'rsgain not installed')
+    def test_replaygain_refuses_a_damaged_track(self):
+        a = self.album('Various/Multi (2001)')
+        p = self.flacs(a)[1]
+        lay = fm.read_layout(p)
+        with open(p, 'r+b') as f:
+            f.seek((lay.audio_start + lay.size) // 2)
+            f.write(b'\x55' * 4096)
+        code, out, err = cli('replaygain', '--apply', a, env=self.env)
+        self.assertEqual(code, 1)
+        self.assertIn('does not decode', err)
+        self.assertFalse([q for q in self.flacs(a) if 'REPLAYGAIN_TRACK_GAIN' in FLAC(q)])
+
+    def test_48k_from_mp3_is_lossy_not_upsampled(self):
+        src, mp3, out = (os.path.join(self.tmp, n) for n in ('src.flac', 'x.mp3', 'mp3at48.flac'))
+        noise(src, rate=48000)
+        ff('-i', 'file:' + src, '-c:a', 'libmp3lame', '-b:a', '128k', 'file:' + mp3)
+        ff('-i', 'file:' + mp3, '-c:a', 'flac', '-sample_fmt', 's16', 'file:' + out)
+        os.unlink(src)
+        _, files, _ = findings(self.tmp)
+        self.assertIn('lossy-source', codes(files['mp3at48.flac']))
+        self.assertNotIn('upsampled', codes(files['mp3at48.flac']))
+
+    def test_absurd_disc_numbers(self):
+        a = self.album('Various/Multi (2001)')
+        for p in self.flacs(a):
+            subprocess.run(['metaflac', '--remove-tag=DISCNUMBER', '--set-tag=DISCNUMBER=5000', p], check=True)
+        _, files, albums = findings(a, '--quick')
+        self.assertNotIn('check-failed', {f['code'] for fs in albums.values() for f in fs})
+        self.assertTrue(all('implausibly large' in ' '.join(f['message'] for f in r['findings']) for r in files.values()))
+
+    def test_comment_problem_names_the_comment(self):
+        a = self.album('Various/Multi (2001)')
+        p = self.flacs(a)[0]
+        text = 'X' * 29 + '\u00e9'  # a 2-byte character straddling byte 30
+        subprocess.run(['metaflac', f'--set-tag=PLACEHOLDER={text}', p], check=True)
+        with open(p, 'rb') as f:
+            data = f.read()
+        with open(p, 'wb') as f:  # same length: drop the '=' so the comment has no key
+            f.write(data.replace(f'PLACEHOLDER={text}'.encode(), f'PLACEHOLDERx{text}'.encode()))
+        problems = fm.comment_problems(p, fm.read_layout(p))
+        self.assertEqual(len(problems), 1)
+        self.assertIn('is not KEY=value', problems[0])
+
+    def test_temp_file_of_a_running_write_is_not_a_leftover(self):
+        import fcntl
+        a = self.album('Various/Multi (2001)')
+        with open(os.path.join(a, '.flacmeta-0000.flac'), 'w'):
+            pass
+        os.makedirs(os.path.join(self.state, 'flacmeta'))
+        with open(os.path.join(self.state, 'flacmeta', 'lock'), 'w') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            code, out, err = cli('check', '--quick', a, env=self.env)
+        self.assertIn('run in progress', err)
+        self.assertNotIn('leftover-temp', out)
+        code, out, err = cli('check', '--quick', a, env=self.env)
+        self.assertIn('leftover-temp', out)
 
 
 class TestOther(unittest.TestCase):
