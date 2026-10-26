@@ -39,8 +39,8 @@ RandomizedDelaySec=10min
 [Install]
 WantedBy=timers.target
 ```
-Run (fish):
-```fish
+Run (works in zsh and fish):
+```sh
 systemctl --user daemon-reload
 systemctl --user enable --now backup.timer
 systemctl --user list-timers backup.timer

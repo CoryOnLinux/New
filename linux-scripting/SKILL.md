@@ -21,8 +21,8 @@ Generic shell hygiene (quoting, strict mode, not parsing `ls`) you already do. T
 ## The user's machine
 
 - CachyOS (Arch-based). Packages: `sudo pacman -S --needed pkg`. Say so when something is AUR-only.
-- The interactive shell is **fish**. Scripts are bash or sh files. Every command the user is told to paste into their own terminal must be valid fish (commands run on another machine, such as a router over ssh, use that machine's shell): no heredocs, `<(...)` (use `(cmd | psub)`), `[[ ]]`, `$?` (use `$status`), `for ...; do ... done`, `if ...; then ... fi`, bare `VAR=value` (use `set -gx VAR value`) or `${var}`. If it doesn't fit in plain commands, put it in a script file.
-- Install personal scripts with `install -Dm755 script.sh ~/.local/bin/name` (run `fish_add_path ~/.local/bin` once).
+- The terminal runs **zsh**; fish is also set up. Scripts are bash or sh files. Every command the user is told to paste into their own terminal must work in both zsh and fish (commands run on another machine, such as a router over ssh, use that machine's shell). Fine: plain commands, pipes, `&&`/`||`, quotes, `$(...)`, `VAR=value cmd`, `export VAR=value`. Not: fish-only syntax (`and`/`or`, `set -gx`, `(cmd)`, `psub`) or anything fish rejects (heredocs, `<(...)`, `[[ ]]`, `$?`, `${var}`, `for ...; do ... done`, `if ...; then ... fi`, a bare `VAR=value`). If it doesn't fit in plain commands, wrap it in `bash -c '...'` (no `'` or `\` inside) or put it in a script file.
+- Install personal scripts with `install -Dm755 script.sh ~/.local/bin/name` (already on PATH in zsh and fish).
 - systemd is the scheduler; cron usually isn't installed. Use user units (`systemctl --user`) unless root is needed.
 - Don't hard-code device numbers (`renderD128`, `card0`, `sda`): detect, and allow an override.
 
@@ -64,7 +64,7 @@ Details and fixes for each: `references/bash-pitfalls.md`.
 ## Reply
 
 - The script in one code block, or the command. No intro, no walkthrough of the code.
-- A `Run:` block of fish commands: install, dry run, real run.
+- A `Run:` block of commands that work in zsh and fish: install, dry run, real run.
 - At most 3 short notes, only for what the user would want to change or must know: defaults chosen, anything lost or not carried over, anything untested.
 - One `Verified:` line saying what you actually ran.
 - Debugging or review: lead with the cause of the reported symptom, then the other bugs in order of impact, then the fixed script.
